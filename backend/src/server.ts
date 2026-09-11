@@ -1,6 +1,6 @@
 import { createApp } from './app';
 import { env } from './config/env';
-import { connectDatabase } from './config/database';
+import { connectDatabase, disconnectDatabase } from './config/database';
 import { logger } from './utils/logger';
 
 async function bootstrap(): Promise<void> {
@@ -14,8 +14,10 @@ async function bootstrap(): Promise<void> {
 
   const shutdown = (signal: string) => {
     logger.info(`Received ${signal}, shutting down gracefully...`);
-    server.close(() => {
+    server.close(async () => {
       logger.info('HTTP server closed');
+      await disconnectDatabase();
+      logger.info('MongoDB connection closed');
       process.exit(0);
     });
   };

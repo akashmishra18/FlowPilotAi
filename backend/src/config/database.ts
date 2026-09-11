@@ -2,6 +2,14 @@ import mongoose from 'mongoose';
 import { env } from './env';
 import { logger } from '../utils/logger';
 
+const READY_STATE_LABELS: Record<number, string> = {
+  0: 'disconnected',
+  1: 'connected',
+  2: 'connecting',
+  3: 'disconnecting',
+  99: 'uninitialized',
+};
+
 export async function connectDatabase(): Promise<void> {
   mongoose.set('strictQuery', true);
 
@@ -10,6 +18,7 @@ export async function connectDatabase(): Promise<void> {
   });
 
   mongoose.connection.on('error', (err) => {
+    // Never log the connection string itself — it may contain credentials.
     logger.error('MongoDB connection error', { error: err.message });
   });
 
@@ -22,4 +31,9 @@ export async function connectDatabase(): Promise<void> {
 
 export async function disconnectDatabase(): Promise<void> {
   await mongoose.disconnect();
+}
+
+/** Human-readable connection state, used by the health endpoint. */
+export function getDatabaseStatus(): string {
+  return READY_STATE_LABELS[mongoose.connection.readyState] ?? 'unknown';
 }

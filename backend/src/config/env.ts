@@ -26,9 +26,12 @@ export const env = {
   ),
 
   jwt: {
-    secret: process.env.JWT_SECRET ?? '',
+    secret: required('JWT_SECRET', process.env.NODE_ENV === 'test' ? 'test_jwt_secret' : undefined),
     expiresIn: process.env.JWT_EXPIRES_IN ?? '15m',
-    refreshSecret: process.env.JWT_REFRESH_SECRET ?? '',
+    refreshSecret: required(
+      'JWT_REFRESH_SECRET',
+      process.env.NODE_ENV === 'test' ? 'test_jwt_refresh_secret' : undefined,
+    ),
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? '7d',
   },
 

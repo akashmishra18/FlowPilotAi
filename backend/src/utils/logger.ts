@@ -11,6 +11,7 @@ import { env } from '../config/env';
  */
 export const logger = winston.createLogger({
   level: env.logLevel,
+  silent: env.nodeEnv === 'test',
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.errors({ stack: true }),

@@ -1,7 +1,9 @@
 import { NavLink, Outlet } from 'react-router-dom';
-import { LayoutDashboard, Home, Activity, Menu, Sparkles } from 'lucide-react';
+import { LayoutDashboard, Home, Activity, Menu, Sparkles, LogOut } from 'lucide-react';
 import clsx from 'clsx';
 import { useUIStore } from '@/store/uiStore';
+import { useAuthStore } from '@/store/authStore';
+import { logoutRequest } from '@/services/authApi';
 
 const navItems = [
   { to: '/', label: 'Home', icon: Home, end: true },
@@ -12,6 +14,16 @@ const navItems = [
 export default function AppLayout() {
   const isSidebarOpen = useUIStore((s) => s.isSidebarOpen);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
+  const user = useAuthStore((s) => s.user);
+  const clearSession = useAuthStore((s) => s.clearSession);
+
+  async function handleLogout() {
+    try {
+      await logoutRequest();
+    } finally {
+      clearSession();
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -49,7 +61,7 @@ export default function AppLayout() {
         </nav>
 
         <div className="p-3 border-t border-gray-200 text-xs text-gray-400">
-          {isSidebarOpen && <span>Phase 1 — Scaffold</span>}
+          {isSidebarOpen && <span>Phase 2 — Auth + RBAC</span>}
         </div>
       </aside>
 
@@ -63,9 +75,26 @@ export default function AppLayout() {
           >
             <Menu className="w-5 h-5" />
           </button>
-          <h1 className="text-sm font-medium text-gray-500">
+          <h1 className="text-sm font-medium text-gray-500 flex-1">
             Agentic AI Operations Platform — Game Development Companies
           </h1>
+
+          {user && (
+            <div className="flex items-center gap-3">
+              <div className="text-right leading-tight">
+                <div className="text-sm font-medium text-gray-900">{user.name}</div>
+                <div className="text-xs text-gray-400">{user.role}</div>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="p-2 rounded-lg hover:bg-gray-100 text-gray-500"
+                aria-label="Log out"
+                title="Log out"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          )}
         </header>
 
         <main className="flex-1 overflow-y-auto">
