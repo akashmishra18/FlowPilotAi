@@ -1,14 +1,15 @@
 import { Router } from 'express';
 import healthRoutes from './health.routes';
 import authRoutes from './auth.routes';
+import employeeRoutes from './employee.routes';
 
 const router = Router();
 
 router.use('/health', healthRoutes);
 router.use('/auth', authRoutes);
+router.use('/employees', employeeRoutes);
 
-// Phase 3+:
-// router.use('/employees', employeeRoutes);
+// Phase 3.2+:
 // router.use('/projects', projectRoutes);
 // router.use('/tasks', taskRoutes);
 // router.use('/bugs', bugRoutes);

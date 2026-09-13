@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom';
-import { LayoutDashboard, Home, Activity, Menu, Sparkles, LogOut } from 'lucide-react';
+import { LayoutDashboard, Home, Activity, Menu, Sparkles, LogOut, Users, UserCircle } from 'lucide-react';
 import clsx from 'clsx';
 import { useUIStore } from '@/store/uiStore';
 import { useAuthStore } from '@/store/authStore';
@@ -8,6 +8,8 @@ import { logoutRequest } from '@/services/authApi';
 const navItems = [
   { to: '/', label: 'Home', icon: Home, end: true },
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/employees', label: 'Employees', icon: Users, allow: ['ADMIN', 'MANAGER'] as const },
+  { to: '/profile', label: 'My Profile', icon: UserCircle },
   { to: '/status', label: 'System Status', icon: Activity },
 ];
 
@@ -40,28 +42,30 @@ export default function AppLayout() {
         </div>
 
         <nav className="flex-1 py-4 space-y-1 px-2">
-          {navItems.map(({ to, label, icon: Icon, end }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              className={({ isActive }) =>
-                clsx(
-                  'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-                  isActive
-                    ? 'bg-brand-50 text-brand-700'
-                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-                )
-              }
-            >
-              <Icon className="w-5 h-5 shrink-0" />
-              {isSidebarOpen && <span className="whitespace-nowrap">{label}</span>}
-            </NavLink>
-          ))}
+          {navItems
+            .filter((item) => !item.allow || (user && (item.allow as readonly string[]).includes(user.role)))
+            .map(({ to, label, icon: Icon, end }) => (
+              <NavLink
+                key={to}
+                to={to}
+                end={end}
+                className={({ isActive }) =>
+                  clsx(
+                    'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                    isActive
+                      ? 'bg-brand-50 text-brand-700'
+                      : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
+                  )
+                }
+              >
+                <Icon className="w-5 h-5 shrink-0" />
+                {isSidebarOpen && <span className="whitespace-nowrap">{label}</span>}
+              </NavLink>
+            ))}
         </nav>
 
         <div className="p-3 border-t border-gray-200 text-xs text-gray-400">
-          {isSidebarOpen && <span>Phase 2 — Auth + RBAC</span>}
+          {isSidebarOpen && <span>Phase 3.1 — Employee Management</span>}
         </div>
       </aside>
 

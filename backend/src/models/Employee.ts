@@ -6,6 +6,7 @@ export interface EmployeeDocument extends Document {
   employeeId: string;
   department: string;
   designation: string;
+  phone: string | null;
   skills: string[];
   joinedAt: Date;
   managerId: Types.ObjectId | null;
@@ -38,6 +39,11 @@ const employeeSchema = new Schema<EmployeeDocument>(
       required: true,
       trim: true,
     },
+    phone: {
+      type: String,
+      default: null,
+      trim: true,
+    },
     skills: {
       type: [String],
       default: [],
@@ -60,5 +66,10 @@ const employeeSchema = new Schema<EmployeeDocument>(
     timestamps: true,
   },
 );
+
+// Supports the /api/employees list filters (department, isActive) without
+// a full collection scan once employee counts grow.
+employeeSchema.index({ department: 1 });
+employeeSchema.index({ isActive: 1 });
 
 export const EmployeeModel = model<EmployeeDocument>('Employee', employeeSchema);
