@@ -32,10 +32,19 @@ export const PROJECT_STATUS = {
   ACTIVE: 'ACTIVE',
   ON_HOLD: 'ON_HOLD',
   COMPLETED: 'COMPLETED',
-  ARCHIVED: 'ARCHIVED',
+  CANCELLED: 'CANCELLED',
 } as const;
 export type ProjectStatus = (typeof PROJECT_STATUS)[keyof typeof PROJECT_STATUS];
 export const PROJECT_STATUS_VALUES = Object.values(PROJECT_STATUS);
+
+export const PROJECT_PRIORITY = {
+  LOW: 'LOW',
+  MEDIUM: 'MEDIUM',
+  HIGH: 'HIGH',
+  CRITICAL: 'CRITICAL',
+} as const;
+export type ProjectPriority = (typeof PROJECT_PRIORITY)[keyof typeof PROJECT_PRIORITY];
+export const PROJECT_PRIORITY_VALUES = Object.values(PROJECT_PRIORITY);
 
 export const TASK_PRIORITY = {
   LOW: 'LOW',
