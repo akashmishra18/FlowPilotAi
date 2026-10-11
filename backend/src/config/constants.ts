@@ -58,9 +58,23 @@ export const TASK_PRIORITY_VALUES = Object.values(TASK_PRIORITY);
 export const TASK_STATUS = {
   TODO: 'TODO',
   IN_PROGRESS: 'IN_PROGRESS',
-  BLOCKED: 'BLOCKED',
+  REVIEW: 'REVIEW',
   COMPLETED: 'COMPLETED',
-  CANCELLED: 'CANCELLED',
+  BLOCKED: 'BLOCKED',
 } as const;
 export type TaskStatus = (typeof TASK_STATUS)[keyof typeof TASK_STATUS];
 export const TASK_STATUS_VALUES = Object.values(TASK_STATUS);
+
+/**
+ * Status transitions an assignee (a plain EMPLOYEE/TEAM_LEAD working their
+ * own task) may make. Notably an assignee can submit work for REVIEW but can
+ * never mark it COMPLETED themselves — that sign-off belongs to the project's
+ * manager or an ADMIN, who may move a task to any status.
+ */
+export const ASSIGNEE_TASK_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
+  TODO: ['IN_PROGRESS'],
+  IN_PROGRESS: ['TODO', 'REVIEW', 'BLOCKED'],
+  BLOCKED: ['IN_PROGRESS'],
+  REVIEW: ['IN_PROGRESS'],
+  COMPLETED: [],
+};
