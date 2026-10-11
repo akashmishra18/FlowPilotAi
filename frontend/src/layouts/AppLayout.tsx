@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom';
-import { LayoutDashboard, Home, Activity, Menu, Sparkles, LogOut, Users, UserCircle } from 'lucide-react';
+import { LayoutDashboard, Home, Activity, Menu, Sparkles, LogOut, Users, UserCircle, FolderKanban } from 'lucide-react';
 import clsx from 'clsx';
 import { useUIStore } from '@/store/uiStore';
 import { useAuthStore } from '@/store/authStore';
@@ -8,6 +8,7 @@ import { logoutRequest } from '@/services/authApi';
 const navItems = [
   { to: '/', label: 'Home', icon: Home, end: true },
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/projects', label: 'Projects', icon: FolderKanban },
   { to: '/employees', label: 'Employees', icon: Users, allow: ['ADMIN', 'MANAGER'] as const },
   { to: '/profile', label: 'My Profile', icon: UserCircle },
   { to: '/status', label: 'System Status', icon: Activity },
@@ -65,7 +66,7 @@ export default function AppLayout() {
         </nav>
 
         <div className="p-3 border-t border-gray-200 text-xs text-gray-400">
-          {isSidebarOpen && <span>Phase 3.1 — Employee Management</span>}
+          {isSidebarOpen && <span>Phase 3.2 — Projects</span>}
         </div>
       </aside>
 

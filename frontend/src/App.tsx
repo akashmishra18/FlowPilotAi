@@ -10,6 +10,8 @@ import RegisterPage from './pages/RegisterPage';
 import EmployeesPage from './pages/EmployeesPage';
 import EmployeeDetailPage from './pages/EmployeeDetailPage';
 import MyProfilePage from './pages/MyProfilePage';
+import ProjectsPage from './pages/ProjectsPage';
+import ProjectDetailPage from './pages/ProjectDetailPage';
 import { useAuthBootstrap } from './hooks/useAuthBootstrap';
 
 export default function App() {
@@ -29,6 +31,13 @@ export default function App() {
           <Route element={<ProtectedRoute />}>
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/profile" element={<MyProfilePage />} />
+
+            {/* Visible to every authenticated role — the backend itself
+                scopes which projects come back (ADMIN: all, MANAGER:
+                managed, everyone else: projects they're a member of), so
+                there's no role-based route gate here, unlike Employees. */}
+            <Route path="/projects" element={<ProjectsPage />} />
+            <Route path="/projects/:id" element={<ProjectDetailPage />} />
 
             <Route element={<RoleProtectedRoute allow={['ADMIN', 'MANAGER']} />}>
               <Route path="/employees" element={<EmployeesPage />} />
