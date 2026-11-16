@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { body, param, query } from 'express-validator';
 import * as taskController from '../controllers/taskController';
+import * as messagingController from '../controllers/messagingController';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/rbac';
 import { validateRequest } from '../middleware/validateRequest';
@@ -32,6 +33,14 @@ router.post(
   validateRequest,
   taskController.create,
 );
+
+router.get(
+  '/overdue-assistant',
+  taskController.overdueAssistant,
+);
+
+router.get('/:id/reminder-preview', [param('id').isMongoId().withMessage('Invalid task id')], validateRequest, messagingController.reminderPreview);
+router.post('/:id/reminders', [param('id').isMongoId().withMessage('Invalid task id')], validateRequest, messagingController.sendReminder);
 
 router.get(
   '/',

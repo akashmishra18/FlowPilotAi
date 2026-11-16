@@ -3,10 +3,14 @@ import { createApp } from '../../src/app';
 import { AppError } from '../../src/utils/AppError';
 import { signAccessToken } from '../../src/utils/jwt';
 import * as authService from '../../src/services/authService';
+import { UserModel } from '../../src/models/User';
 
 jest.mock('../../src/services/authService');
+jest.mock('../../src/models/User');
 
 const mockedAuthService = authService as jest.Mocked<typeof authService>;
+const mockedUserModel = UserModel as jest.Mocked<typeof UserModel>;
+mockedUserModel.findById.mockReturnValue({ select: jest.fn().mockResolvedValue({ isActive: true }) } as never);
 
 const app = createApp();
 
@@ -111,6 +115,34 @@ describe('POST /api/auth/login', () => {
       .send({ email: 'inactive@example.com', password: 'supersecure1' });
 
     expect(res.status).toBe(403);
+  });
+});
+
+describe('POST /api/auth/users (admin provisioning)', () => {
+  it('allows an ADMIN to provision an explicitly assigned role', async () => {
+    mockedAuthService.provisionUser.mockResolvedValue({ ...fakeUser, role: 'MANAGER' } as never);
+    const token = signAccessToken('admin-1', 'ADMIN');
+    const res = await request(app)
+      .post('/api/auth/users')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Manager', email: 'manager@example.com', password: 'supersecure1', role: 'MANAGER' });
+
+    expect(res.status).toBe(201);
+    expect(mockedAuthService.provisionUser).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'admin-1', role: 'ADMIN' }),
+      expect.objectContaining({ role: 'MANAGER' }),
+    );
+  });
+
+  it('rejects non-admin provisioning before calling the service', async () => {
+    const token = signAccessToken('manager-1', 'MANAGER');
+    const res = await request(app)
+      .post('/api/auth/users')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Employee', email: 'employee@example.com', password: 'supersecure1', role: 'EMPLOYEE' });
+
+    expect(res.status).toBe(403);
+    expect(mockedAuthService.provisionUser).not.toHaveBeenCalled();
   });
 });
 

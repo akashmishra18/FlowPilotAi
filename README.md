@@ -124,6 +124,63 @@ Expected response:
 }
 ```
 
+## Local demo workspace (optional)
+
+The demo seed creates clearly labelled demo accounts, employee profiles, two
+projects, sample tasks (including one overdue task), and one pending
+reassignment request. All demo accounts use the password you supply through
+`DEMO_SEED_PASSWORD`; the seed never prints or stores that password in plain
+text. The database URI must point to MongoDB on this computer. The command is
+idempotent and refuses to adopt existing accounts or business records.
+
+In a local zsh terminal:
+
+```bash
+cd backend
+export ALLOW_LOCAL_DEMO_SEED=true
+read -s 'DEMO_SEED_PASSWORD?Enter a demo-only password (12+ characters): '
+echo
+export DEMO_SEED_PASSWORD
+npm run seed:demo
+unset DEMO_SEED_PASSWORD ALLOW_LOCAL_DEMO_SEED
+```
+
+Demo accounts: `demo.admin@flowpilot.local`, `demo.manager@flowpilot.local`,
+`demo.employee.one@flowpilot.local`, and `demo.employee.two@flowpilot.local`.
+Each uses the password entered above. Seeded records are labelled `[DEMO]` or
+use a `DEMO-` employee/project code.
+
+To set a new password on those four existing demo accounts without creating
+or changing any other users, run this separate local-only command:
+
+```bash
+cd backend
+export ALLOW_LOCAL_DEMO_PASSWORD_RESET=true
+read -s 'DEMO_SEED_PASSWORD?Enter the new demo-only password (12+ characters): '
+echo
+export DEMO_SEED_PASSWORD
+npm run demo:reset-password
+unset DEMO_SEED_PASSWORD ALLOW_LOCAL_DEMO_PASSWORD_RESET
+```
+
+The reset refuses production and non-local MongoDB, and requires all four
+accounts to exist with their expected demo provenance and roles before it
+updates any password hashes. It does not print the password.
+
+Cleanup is a separate destructive command. It refuses production, remote
+MongoDB, missing confirmation, or cleanup that would orphan non-demo records.
+Audit history is retained:
+
+```bash
+cd backend
+export CONFIRM_LOCAL_DEMO_CLEANUP=DELETE_FLOWPILOT_LOCAL_DEMO
+npm run seed:demo:cleanup
+unset CONFIRM_LOCAL_DEMO_CLEANUP
+```
+
+Only records tagged internally by this seed are removed; untagged records are
+never adopted or deleted.
+
 ## 9. Project Structure
 
 ```

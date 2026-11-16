@@ -8,15 +8,29 @@ import { Schema, model, Document, Types } from 'mongoose';
  */
 export interface RefreshTokenDocument extends Document {
   _id: Types.ObjectId;
+  tokenId: string;
+  familyId: string;
   userId: Types.ObjectId;
   tokenHash: string;
   expiresAt: Date;
   revokedAt: Date | null;
+  replacedByTokenId: string | null;
   createdAt: Date;
 }
 
 const refreshTokenSchema = new Schema<RefreshTokenDocument>(
   {
+    tokenId: {
+      type: String,
+      required: true,
+      unique: true,
+      index: true,
+    },
+    familyId: {
+      type: String,
+      required: true,
+      index: true,
+    },
     userId: {
       type: Schema.Types.ObjectId,
       ref: 'User',
@@ -37,6 +51,10 @@ const refreshTokenSchema = new Schema<RefreshTokenDocument>(
     },
     revokedAt: {
       type: Date,
+      default: null,
+    },
+    replacedByTokenId: {
+      type: String,
       default: null,
     },
   },

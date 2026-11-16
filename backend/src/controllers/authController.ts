@@ -34,6 +34,11 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
   sendSuccess(res, { user }, 201, 'Account created successfully');
 });
 
+export const provision = asyncHandler(async (req: Request, res: Response) => {
+  const user = await authService.provisionUser(req.user!, req.body);
+  sendSuccess(res, { user }, 201, 'User account provisioned successfully');
+});
+
 export const login = asyncHandler(async (req: Request, res: Response) => {
   const { email, password } = req.body;
   const { user, tokens } = await authService.loginUser({ email, password });

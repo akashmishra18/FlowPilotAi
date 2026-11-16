@@ -1,132 +1,102 @@
 import { FormEvent, useState } from 'react';
-import { LoaderCircle } from 'lucide-react';
-import Modal from '@/components/Modal';
+import { Alert, Button, Field, Input, Modal } from '@/components/ui';
+import { parseApiError } from '@/services/errorHelpers';
+import { toast } from '@/store/toastStore';
 import { createEmployee } from './employeesApi';
 import { Employee } from './types';
-import { getFriendlyErrorMessage } from '@/services/errorHelpers';
 
 interface CreateEmployeeModalProps {
   onClose: () => void;
   onCreated: (employee: Employee) => void;
 }
 
+const OBJECT_ID = /^[a-f0-9]{24}$/i;
+
 export default function CreateEmployeeModal({ onClose, onCreated }: CreateEmployeeModalProps) {
-  const [userId, setUserId] = useState('');
-  const [employeeId, setEmployeeId] = useState('');
-  const [department, setDepartment] = useState('');
-  const [designation, setDesignation] = useState('');
-  const [phone, setPhone] = useState('');
-  const [joinedAt, setJoinedAt] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [values, setValues] = useState({ userId: '', employeeId: '', department: '', designation: '', phone: '', joinedAt: '' });
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const set = (key: keyof typeof values) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    setValues((v) => ({ ...v, [key]: e.target.value }));
+    setErrors((prev) => ({ ...prev, [key]: '' }));
+  };
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setError(null);
+    setFormError(null);
+
+    const found: Record<string, string> = {};
+    if (!OBJECT_ID.test(values.userId.trim())) found.userId = 'Enter the account ID shown in your account-provisioning records.';
+    if (!values.employeeId.trim()) found.employeeId = 'Employee ID is required.';
+    if (!values.department.trim()) found.department = 'Department is required.';
+    if (!values.designation.trim()) found.designation = 'Designation is required.';
+    if (!values.joinedAt) found.joinedAt = 'Joining date is required.';
+    setErrors(found);
+    if (Object.keys(found).length > 0) return;
+
     setIsSubmitting(true);
     try {
       const employee = await createEmployee({
-        userId: userId.trim(),
-        employeeId: employeeId.trim(),
-        department: department.trim(),
-        designation: designation.trim(),
-        phone: phone.trim() || undefined,
-        joinedAt,
+        userId: values.userId.trim(),
+        employeeId: values.employeeId.trim(),
+        department: values.department.trim(),
+        designation: values.designation.trim(),
+        phone: values.phone.trim() || undefined,
+        joinedAt: values.joinedAt,
       });
+      toast.success('Employee created.');
       onCreated(employee);
     } catch (err) {
-      setError(getFriendlyErrorMessage(err));
+      const parsed = parseApiError(err, 'Could not create the employee.');
+      if (parsed.status === 422) setErrors(parsed.fieldErrors);
+      setFormError(parsed.status === 422 ? 'Please fix the highlighted fields.' : parsed.message);
     } finally {
       setIsSubmitting(false);
     }
   }
 
   return (
-    <Modal title="Add Employee" onClose={onClose}>
-      {error && <div className="mb-4 rounded-lg bg-red-50 text-red-700 text-sm px-4 py-2.5">{error}</div>}
-
-      <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2 mb-4">
-        The employee must already have a user account (created via registration). Enter their user ID below —
-        a user search/lookup tool will be added in a later phase.
-      </p>
-
-      <form onSubmit={handleSubmit} className="space-y-3">
-        <Field label="User ID">
-          <input
-            required
-            value={userId}
-            onChange={(e) => setUserId(e.target.value)}
-            className="input"
-            placeholder="e.g. 665f1c2e9a1b2c3d4e5f6789"
-          />
+    <Modal title="Add employee" description="Link an employee record to an existing user account." onClose={onClose}>
+      {formError && (
+        <Alert tone="error" className="mb-4">
+          {formError}
+        </Alert>
+      )}
+      <Alert tone="info" className="mb-4">
+        An employee record must link to an existing user account. This form cannot search for or create accounts. If you cannot find the account ID in your account-provisioning records, ask your system administrator for help.
+      </Alert>
+      <form onSubmit={handleSubmit} noValidate className="space-y-4">
+        <Field label="Existing account ID" required error={errors.userId} hint="Use the account's 24-character system ID, not an email address or employee code.">
+          {(c) => <Input {...c} value={values.userId} onChange={set('userId')} placeholder="Paste the existing account ID" className="font-mono" />}
         </Field>
-        <Field label="Employee ID">
-          <input
-            required
-            value={employeeId}
-            onChange={(e) => setEmployeeId(e.target.value)}
-            className="input"
-            placeholder="FP-0001"
-          />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Employee ID" required error={errors.employeeId}>
+            {(c) => <Input {...c} value={values.employeeId} onChange={set('employeeId')} placeholder="FP-0001" />}
+          </Field>
+          <Field label="Joining date" required error={errors.joinedAt}>
+            {(c) => <Input {...c} type="date" value={values.joinedAt} onChange={set('joinedAt')} />}
+          </Field>
+          <Field label="Department" required error={errors.department}>
+            {(c) => <Input {...c} value={values.department} onChange={set('department')} placeholder="Engineering" />}
+          </Field>
+          <Field label="Designation" required error={errors.designation}>
+            {(c) => <Input {...c} value={values.designation} onChange={set('designation')} placeholder="Game Programmer" />}
+          </Field>
+        </div>
+        <Field label="Phone" error={errors.phone}>
+          {(c) => <Input {...c} type="tel" value={values.phone} onChange={set('phone')} />}
         </Field>
-        <Field label="Department">
-          <input
-            required
-            value={department}
-            onChange={(e) => setDepartment(e.target.value)}
-            className="input"
-            placeholder="Engineering"
-          />
-        </Field>
-        <Field label="Designation">
-          <input
-            required
-            value={designation}
-            onChange={(e) => setDesignation(e.target.value)}
-            className="input"
-            placeholder="Game Programmer"
-          />
-        </Field>
-        <Field label="Phone (optional)">
-          <input value={phone} onChange={(e) => setPhone(e.target.value)} className="input" placeholder="+91..." />
-        </Field>
-        <Field label="Joining Date">
-          <input
-            required
-            type="date"
-            value={joinedAt}
-            onChange={(e) => setJoinedAt(e.target.value)}
-            className="input"
-          />
-        </Field>
-
         <div className="flex justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg"
-          >
+          <Button variant="ghost" onClick={onClose} disabled={isSubmitting}>
             Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 disabled:opacity-60 rounded-lg"
-          >
-            {isSubmitting && <LoaderCircle className="w-4 h-4 animate-spin" />}
-            Create Employee
-          </button>
+          </Button>
+          <Button type="submit" variant="primary" isLoading={isSubmitting}>
+            Create employee
+          </Button>
         </div>
       </form>
     </Modal>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
-      {children}
-    </div>
   );
 }

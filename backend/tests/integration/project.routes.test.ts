@@ -4,10 +4,14 @@ import { createApp } from '../../src/app';
 import { signAccessToken } from '../../src/utils/jwt';
 import { AppError } from '../../src/utils/AppError';
 import * as projectService from '../../src/services/projectService';
+import { UserModel } from '../../src/models/User';
 
 jest.mock('../../src/services/projectService');
+jest.mock('../../src/models/User');
 
 const mockedProjectService = projectService as jest.Mocked<typeof projectService>;
+const mockedUserModel = UserModel as jest.Mocked<typeof UserModel>;
+mockedUserModel.findById.mockReturnValue({ select: jest.fn().mockResolvedValue({ isActive: true }) } as never);
 
 const app = createApp();
 
@@ -221,11 +225,15 @@ describe('PATCH /api/projects/:id/status', () => {
 describe('PATCH /api/projects/:id/manager (ADMIN only)', () => {
   it('ADMIN can reassign the manager', async () => {
     mockedProjectService.assignManager.mockResolvedValue(fakeProject as never);
+    const newManagerId = new Types.ObjectId().toString();
     const res = await request(app)
       .patch(`/api/projects/${validId}/manager`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ managerId: new Types.ObjectId().toString() });
+      .send({ managerId: newManagerId });
     expect(res.status).toBe(200);
+    expect(mockedProjectService.assignManager).toHaveBeenCalledWith(
+      expect.objectContaining({ id: adminId, role: 'ADMIN' }), validId, newManagerId,
+    );
   });
 
   it('MANAGER cannot reassign the manager, even for their own project', async () => {
@@ -287,6 +295,9 @@ describe('PATCH /api/projects/:id/deactivate (ADMIN only)', () => {
       .patch(`/api/projects/${validId}/deactivate`)
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
+    expect(mockedProjectService.deactivateProject).toHaveBeenCalledWith(
+      expect.objectContaining({ id: adminId, role: 'ADMIN' }), validId,
+    );
   });
 
   it('MANAGER cannot deactivate', async () => {

@@ -1,188 +1,193 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Plus, ChevronLeft, ChevronRight, LoaderCircle } from 'lucide-react';
+import { Plus, Users } from 'lucide-react';
+import { Alert, Avatar, Badge, Button, EmptyState, Input, PageHeader, Pagination, SearchInput, Select, Skeleton } from '@/components/ui';
 import RoleGate from '@/components/RoleGate';
+import { useAsyncData } from '@/hooks/useAsyncData';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { listEmployees } from '@/features/employees/employeesApi';
-import { Employee, EmployeePagination } from '@/features/employees/types';
+import { Employee } from '@/features/employees/types';
 import CreateEmployeeModal from '@/features/employees/CreateEmployeeModal';
-import { getFriendlyErrorMessage } from '@/services/errorHelpers';
+
+const PAGE_SIZE = 10;
+
+function StatusBadge({ active }: { active: boolean }) {
+  return (
+    <Badge tone={active ? 'success' : 'neutral'} dot>
+      {active ? 'Active' : 'Inactive'}
+    </Badge>
+  );
+}
+
+function EmployeeRows({ employees }: { employees: Employee[] }) {
+  return (
+    <>
+      <div className="fp-table-shell hidden lg:block">
+        <table className="w-full text-left text-sm">
+          <caption className="sr-only">Employees</caption>
+          <thead className="border-b border-white/10 bg-white/[0.03] text-xs uppercase tracking-wide text-slate-400">
+            <tr>
+              <th scope="col" className="px-4 py-3 font-medium">Employee</th>
+              <th scope="col" className="px-4 py-3 font-medium">ID</th>
+              <th scope="col" className="px-4 py-3 font-medium">Department</th>
+              <th scope="col" className="px-4 py-3 font-medium">Designation</th>
+              <th scope="col" className="px-4 py-3 font-medium">Status</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/5">
+            {employees.map((emp) => (
+              <tr key={emp._id} className="hover:bg-white/[0.03]">
+                <td className="px-4 py-3">
+                  <Link to={`/employees/${emp._id}`} className="flex items-center gap-3">
+                    <Avatar name={emp.user?.name ?? emp.employeeId} />
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium text-slate-100 hover:text-brand-300">{emp.user?.name ?? '—'}</span>
+                      <span className="block truncate text-xs text-slate-400">{emp.user?.email}</span>
+                    </span>
+                  </Link>
+                </td>
+                <td className="px-4 py-3 text-slate-300">{emp.employeeId}</td>
+                <td className="px-4 py-3 text-slate-300">{emp.department}</td>
+                <td className="px-4 py-3 text-slate-300">{emp.designation}</td>
+                <td className="px-4 py-3"><StatusBadge active={emp.isActive} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <ul className="fp-stagger space-y-3 lg:hidden">
+        {employees.map((emp) => (
+          <li key={emp._id}>
+            <Link to={`/employees/${emp._id}`} className="flex items-center gap-3 rounded-xl border border-white/10 bg-panel p-4 hover:border-white/20">
+              <Avatar name={emp.user?.name ?? emp.employeeId} size="lg" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium text-slate-100">{emp.user?.name ?? emp.employeeId}</span>
+                <span className="block truncate text-xs text-slate-400">
+                  {emp.employeeId} · {emp.designation}
+                </span>
+              </span>
+              <StatusBadge active={emp.isActive} />
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
 
 export default function EmployeesPage() {
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [pagination, setPagination] = useState<EmployeePagination | null>(null);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [department, setDepartment] = useState('');
-  const [isActive, setIsActive] = useState<string>(''); // '', 'true', 'false'
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [status, setStatus] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
 
-  const fetchEmployees = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const result = await listEmployees({
+  const debouncedSearch = useDebouncedValue(search.trim(), 350);
+  const debouncedDepartment = useDebouncedValue(department.trim(), 350);
+
+  const fetcher = useCallback(
+    () =>
+      listEmployees({
         page,
-        limit: 10,
-        search: search || undefined,
-        department: department || undefined,
-        isActive: isActive === '' ? undefined : isActive === 'true',
-      });
-      setEmployees(result.employees);
-      setPagination(result.pagination);
-    } catch (err) {
-      setError(getFriendlyErrorMessage(err, 'Could not load employees.'));
-    } finally {
-      setIsLoading(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, search, department, isActive]);
-
-  useEffect(() => {
-    fetchEmployees();
-  }, [fetchEmployees]);
+        limit: PAGE_SIZE,
+        search: debouncedSearch || undefined,
+        department: debouncedDepartment || undefined,
+        isActive: status === '' ? undefined : status === 'true',
+      }),
+    [page, debouncedSearch, debouncedDepartment, status],
+  );
+  const { data, error, isLoading, isInitialLoading, reload } = useAsyncData(fetcher, 'Could not load employees.');
+  const hasFilters = Boolean(debouncedSearch || debouncedDepartment || status);
 
   return (
-    <div className="max-w-6xl mx-auto px-6 py-10">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h2 className="text-2xl font-semibold text-gray-900">Employees</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            {pagination ? `${pagination.total} total` : 'Loading...'}
-          </p>
-        </div>
-        <RoleGate allow={['ADMIN']}>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium px-4 py-2 rounded-lg"
-          >
-            <Plus className="w-4 h-4" /> Add Employee
-          </button>
-        </RoleGate>
-      </div>
+    <div>
+      <PageHeader
+        title="Employees"
+        description={data ? `${data.pagination.total} total` : 'People and roles in your organization.'}
+        actions={
+          <RoleGate allow={['ADMIN']}>
+            <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>
+              <Plus className="h-4 w-4" aria-hidden="true" /> Add employee
+            </Button>
+          </RoleGate>
+        }
+      />
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3 mb-4">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            value={search}
-            onChange={(e) => {
-              setPage(1);
-              setSearch(e.target.value);
-            }}
-            placeholder="Search by name, email, or employee ID"
-            className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
-          />
-        </div>
-        <input
+      <form role="search" aria-label="Filter employees" onSubmit={(e) => e.preventDefault()} className="mb-6 grid gap-3 sm:grid-cols-3">
+        <SearchInput
+          aria-label="Search employees"
+          value={search}
+          onChange={(e) => {
+            setPage(1);
+            setSearch(e.target.value);
+          }}
+          placeholder="Search name, email or employee ID"
+        />
+        <Input
+          aria-label="Filter by department"
           value={department}
           onChange={(e) => {
             setPage(1);
             setDepartment(e.target.value);
           }}
-          placeholder="Filter by department"
-          className="px-3 py-2 text-sm rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
+          placeholder="Department"
         />
-        <select
-          value={isActive}
+        <Select
+          aria-label="Filter by status"
+          value={status}
           onChange={(e) => {
             setPage(1);
-            setIsActive(e.target.value);
+            setStatus(e.target.value);
           }}
-          className="px-3 py-2 text-sm rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
         >
           <option value="">All statuses</option>
           <option value="true">Active</option>
           <option value="false">Inactive</option>
-        </select>
-      </div>
+        </Select>
+      </form>
 
-      {error && <div className="mb-4 rounded-lg bg-red-50 text-red-700 text-sm px-4 py-2.5">{error}</div>}
-
-      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-        {isLoading ? (
-          <div className="flex items-center justify-center py-16 text-gray-400 text-sm gap-2">
-            <LoaderCircle className="w-4 h-4 animate-spin" /> Loading employees...
-          </div>
-        ) : employees.length === 0 ? (
-          <div className="text-center py-16 text-sm text-gray-400">No employees found.</div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-500 text-left">
-              <tr>
-                <th className="px-4 py-3 font-medium">Employee ID</th>
-                <th className="px-4 py-3 font-medium">Name</th>
-                <th className="px-4 py-3 font-medium">Department</th>
-                <th className="px-4 py-3 font-medium">Designation</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {employees.map((emp) => (
-                <tr key={emp._id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 font-medium text-gray-900">{emp.employeeId}</td>
-                  <td className="px-4 py-3 text-gray-700">
-                    <div>{emp.user?.name ?? '—'}</div>
-                    <div className="text-xs text-gray-400">{emp.user?.email}</div>
-                  </td>
-                  <td className="px-4 py-3 text-gray-700">{emp.department}</td>
-                  <td className="px-4 py-3 text-gray-700">{emp.designation}</td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={
-                        emp.isActive
-                          ? 'inline-block px-2 py-0.5 rounded-full text-xs bg-green-50 text-green-700'
-                          : 'inline-block px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-500'
-                      }
-                    >
-                      {emp.isActive ? 'Active' : 'Inactive'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <Link to={`/employees/${emp._id}`} className="text-brand-600 hover:underline font-medium">
-                      View
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {pagination && pagination.totalPages > 1 && (
-        <div className="flex items-center justify-between mt-4 text-sm text-gray-500">
-          <span>
-            Page {pagination.page} of {pagination.totalPages}
-          </span>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={pagination.page <= 1}
-              className="p-2 rounded-lg border border-gray-200 disabled:opacity-40 hover:bg-gray-50"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => setPage((p) => Math.min(pagination.totalPages, p + 1))}
-              disabled={pagination.page >= pagination.totalPages}
-              className="p-2 rounded-lg border border-gray-200 disabled:opacity-40 hover:bg-gray-50"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
+      {error && (
+        <Alert
+          tone="error"
+          title="Couldn't load employees"
+          className="mb-4"
+          action={
+            <Button size="sm" onClick={() => void reload()}>
+              Retry
+            </Button>
+          }
+        >
+          {error}
+        </Alert>
       )}
 
-      {showCreateModal && (
+      {isInitialLoading && !data ? (
+        <div role="status" aria-busy="true" aria-label="Loading employees" className="space-y-3">
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-16" />
+          ))}
+        </div>
+      ) : data && data.employees.length > 0 ? (
+        <div aria-busy={isLoading} className={isLoading ? 'opacity-60 transition-opacity' : undefined}>
+          <EmployeeRows employees={data.employees} />
+          <Pagination page={data.pagination.page} totalPages={data.pagination.totalPages} total={data.pagination.total} onChange={setPage} />
+        </div>
+      ) : !error && data ? (
+        <EmptyState
+          icon={Users}
+          title={hasFilters ? 'No employees match your filters' : 'No employees yet'}
+          description={hasFilters ? 'Try a different search or clear the filters.' : 'Add an employee by linking an existing user account. Accounts must be created before they can appear here.'}
+          action={!hasFilters && <RoleGate allow={['ADMIN']}><Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>Add first employee</Button></RoleGate>}
+        />
+      ) : null}
+
+      {showCreate && (
         <CreateEmployeeModal
-          onClose={() => setShowCreateModal(false)}
+          onClose={() => setShowCreate(false)}
           onCreated={() => {
-            setShowCreateModal(false);
-            fetchEmployees();
+            setShowCreate(false);
+            void reload();
           }}
         />
       )}

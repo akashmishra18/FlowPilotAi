@@ -4,15 +4,21 @@ import { createApp } from '../../src/app';
 import { signAccessToken } from '../../src/utils/jwt';
 import { AppError } from '../../src/utils/AppError';
 import * as employeeService from '../../src/services/employeeService';
+import { UserModel } from '../../src/models/User';
 
 jest.mock('../../src/services/employeeService');
+jest.mock('../../src/models/User');
 
 const mockedEmployeeService = employeeService as jest.Mocked<typeof employeeService>;
+const mockedUserModel = UserModel as jest.Mocked<typeof UserModel>;
+mockedUserModel.findById.mockReturnValue({ select: jest.fn().mockResolvedValue({ isActive: true }) } as never);
 
 const app = createApp();
 
 const adminToken = signAccessToken(new Types.ObjectId().toString(), 'ADMIN');
 const managerToken = signAccessToken(new Types.ObjectId().toString(), 'MANAGER');
+const teamLeadUserId = new Types.ObjectId().toString();
+const teamLeadToken = signAccessToken(teamLeadUserId, 'TEAM_LEAD');
 const employeeUserId = new Types.ObjectId().toString();
 const employeeToken = signAccessToken(employeeUserId, 'EMPLOYEE');
 
@@ -46,7 +52,10 @@ describe('POST /api/employees (RBAC)', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.success).toBe(true);
-    expect(mockedEmployeeService.createEmployee).toHaveBeenCalledTimes(1);
+    expect(mockedEmployeeService.createEmployee).toHaveBeenCalledWith(
+      expect.objectContaining({ role: 'ADMIN' }),
+      validBody,
+    );
   });
 
   it('MANAGER cannot create an employee', async () => {
@@ -97,6 +106,10 @@ describe('GET /api/employees (RBAC)', () => {
     const res = await request(app).get('/api/employees').set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
     expect(res.body.data.employees).toHaveLength(1);
+    expect(mockedEmployeeService.getEmployees).toHaveBeenCalledWith(
+      expect.objectContaining({ role: 'ADMIN' }),
+      expect.any(Object),
+    );
   });
 
   it('MANAGER can list employees', async () => {
@@ -118,7 +131,10 @@ describe('GET /api/employees/me', () => {
     const res = await request(app).get('/api/employees/me').set('Authorization', `Bearer ${employeeToken}`);
 
     expect(res.status).toBe(200);
-    expect(mockedEmployeeService.getCurrentEmployeeProfile).toHaveBeenCalledWith(employeeUserId);
+    expect(mockedEmployeeService.getCurrentEmployeeProfile).toHaveBeenCalledWith({
+      id: employeeUserId,
+      role: 'EMPLOYEE',
+    });
   });
 
   it('rejects an unauthenticated request', async () => {
@@ -138,6 +154,20 @@ describe('GET /api/employees/:id (ownership enforced in service layer)', () => {
     expect(res.status).toBe(200);
     expect(mockedEmployeeService.getEmployeeById).toHaveBeenCalledWith(
       { id: employeeUserId, role: 'EMPLOYEE' },
+      validId,
+    );
+  });
+
+  it('passes TEAM_LEAD identity to the service for scope enforcement', async () => {
+    mockedEmployeeService.getEmployeeById.mockResolvedValue(fakeEmployee as never);
+
+    const res = await request(app)
+      .get(`/api/employees/${validId}`)
+      .set('Authorization', `Bearer ${teamLeadToken}`);
+
+    expect(res.status).toBe(200);
+    expect(mockedEmployeeService.getEmployeeById).toHaveBeenCalledWith(
+      { id: teamLeadUserId, role: 'TEAM_LEAD' },
       validId,
     );
   });
@@ -176,7 +206,11 @@ describe('PATCH /api/employees/:id (RBAC)', () => {
       .send(updateBody);
 
     expect(res.status).toBe(200);
-    expect(mockedEmployeeService.updateEmployee).toHaveBeenCalledWith(validId, updateBody);
+    expect(mockedEmployeeService.updateEmployee).toHaveBeenCalledWith(
+      { id: expect.any(String), role: 'ADMIN' },
+      validId,
+      updateBody,
+    );
   });
 
   it('MANAGER can update permitted employee fields', async () => {

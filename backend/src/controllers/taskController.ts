@@ -3,6 +3,7 @@ import { asyncHandler } from '../utils/asyncHandler';
 import { sendSuccess } from '../utils/apiResponse';
 import * as taskService from '../services/taskService';
 import { TaskPriority, TaskStatus } from '../config/constants';
+import { randomUUID } from 'crypto';
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
   const { title, description, projectId, assignedTo, priority, status, dueDate, tags } = req.body;
@@ -36,6 +37,22 @@ export const list = asyncHandler(async (req: Request, res: Response) => {
     search: search as string | undefined,
   });
 
+  sendSuccess(res, result);
+});
+
+export const overdueAssistant = asyncHandler(async (req: Request, res: Response) => {
+  // This endpoint is a live, role-scoped result. Avoid browser/proxy cache hits
+  // and conditional GETs returning an old AI summary as HTTP 304.
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  delete req.headers['if-none-match'];
+  delete req.headers['if-modified-since'];
+
+  const suppliedRequestId = req.get('x-request-id');
+  const requestId = suppliedRequestId && /^[A-Za-z0-9._-]{1,100}$/.test(suppliedRequestId) ? suppliedRequestId : randomUUID();
+  res.setHeader('X-Request-Id', requestId);
+  const result = await taskService.getOverdueTaskAssistant(req.user!, requestId);
   sendSuccess(res, result);
 });
 

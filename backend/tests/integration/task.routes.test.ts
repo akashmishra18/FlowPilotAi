@@ -4,9 +4,12 @@ import { createApp } from '../../src/app';
 import { signAccessToken } from '../../src/utils/jwt';
 import { AppError } from '../../src/utils/AppError';
 import * as taskService from '../../src/services/taskService';
+import { UserModel } from '../../src/models/User';
 
 jest.mock('../../src/services/taskService');
+jest.mock('../../src/models/User');
 const mockedService = taskService as jest.Mocked<typeof taskService>;
+const mockedUserModel = UserModel as jest.Mocked<typeof UserModel>;
 
 const app = createApp();
 
@@ -22,7 +25,10 @@ const projectId = new Types.ObjectId().toString();
 const empRef = new Types.ObjectId().toString();
 const fakeTask = { _id: taskId, title: 'Fix crash', status: 'TODO' };
 
-beforeEach(() => jest.resetAllMocks());
+beforeEach(() => {
+  jest.resetAllMocks();
+  mockedUserModel.findById.mockReturnValue({ select: jest.fn().mockResolvedValue({ isActive: true }) } as never);
+});
 
 describe('POST /api/tasks', () => {
   const validBody = { title: 'Fix crash', projectId, assignedTo: empRef, priority: 'HIGH', tags: ['bug'] };
@@ -157,6 +163,51 @@ describe('GET /api/tasks', () => {
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(422);
     expect(mockedService.listTasks).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /api/tasks/overdue-assistant', () => {
+  it('returns the rule-based assistant result for an authenticated manager', async () => {
+    mockedService.getOverdueTaskAssistant.mockResolvedValue({
+      summary: '1 overdue incomplete task requires attention.',
+      total: 1,
+      summarySource: 'RULE_BASED',
+      fallbackReason: null,
+      tasks: [{ id: taskId, title: 'Fix crash', project: null, assignedEmployee: null, dueDate: '2025-01-01', status: 'TODO' }],
+    });
+
+    const res = await request(app).get('/api/tasks/overdue-assistant').set('Authorization', `Bearer ${managerToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.summarySource).toBe('RULE_BASED');
+    expect(res.headers['cache-control']).toContain('no-store');
+    expect(mockedService.getOverdueTaskAssistant).toHaveBeenCalledWith({ id: managerId, role: 'MANAGER' }, expect.any(String));
+  });
+
+  it('ignores conditional cache validators and returns a fresh assistant response', async () => {
+    mockedService.getOverdueTaskAssistant.mockResolvedValue({ summary: 'A fresh result for overdue work.', total: 1, summarySource: 'AI', fallbackReason: null, tasks: [] });
+
+    const res = await request(app)
+      .get('/api/tasks/overdue-assistant')
+      .set('Authorization', `Bearer ${managerToken}`)
+      .set('If-None-Match', '*')
+      .set('If-Modified-Since', new Date().toUTCString());
+
+    expect(res.status).toBe(200);
+    expect(res.headers['cache-control']).toContain('no-store');
+    expect(res.body.data.summarySource).toBe('AI');
+  });
+
+  it('allows an employee request while delegating scope enforcement to the service', async () => {
+    mockedService.getOverdueTaskAssistant.mockResolvedValue({ summary: 'No overdue incomplete tasks were found in your permitted scope.', total: 0, summarySource: 'RULE_BASED', fallbackReason: null, tasks: [] });
+    const res = await request(app).get('/api/tasks/overdue-assistant').set('Authorization', `Bearer ${employeeToken}`);
+    expect(res.status).toBe(200);
+    expect(mockedService.getOverdueTaskAssistant).toHaveBeenCalledWith({ id: employeeId, role: 'EMPLOYEE' }, expect.any(String));
+  });
+
+  it('rejects unauthenticated assistant requests', async () => {
+    const res = await request(app).get('/api/tasks/overdue-assistant');
+    expect(res.status).toBe(401);
+    expect(mockedService.getOverdueTaskAssistant).not.toHaveBeenCalled();
   });
 });
 

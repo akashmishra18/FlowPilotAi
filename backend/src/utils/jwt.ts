@@ -13,21 +13,26 @@ export interface AccessTokenPayload extends JwtPayload {
   sub: string;
   role: Role;
   type: 'access';
+  familyId?: string;
 }
 
 export interface RefreshTokenPayload extends JwtPayload {
   sub: string;
   type: 'refresh';
+  familyId?: string;
 }
 
-export function signAccessToken(userId: string, role: Role): string {
-  const payload: Omit<AccessTokenPayload, keyof JwtPayload> = { sub: userId, role, type: 'access' };
+export function signAccessToken(userId: string, role: Role, familyId?: string): string {
+  const payload: { sub: string; role: Role; type: 'access'; familyId?: string } = { sub: userId, role, type: 'access' };
+  if (familyId) payload.familyId = familyId;
   const options: SignOptions = { expiresIn: env.jwt.expiresIn as SignOptions['expiresIn'] };
   return jwt.sign(payload, env.jwt.secret, options);
 }
 
-export function signRefreshToken(userId: string): string {
-  const payload: Omit<RefreshTokenPayload, keyof JwtPayload> = { sub: userId, type: 'refresh' };
+export function signRefreshToken(userId: string, tokenId?: string, familyId?: string): string {
+  const payload: { sub: string; type: 'refresh'; jti?: string; familyId?: string } = { sub: userId, type: 'refresh' };
+  if (tokenId) payload.jti = tokenId;
+  if (familyId) payload.familyId = familyId;
   const options: SignOptions = { expiresIn: env.jwt.refreshExpiresIn as SignOptions['expiresIn'] };
   return jwt.sign(payload, env.jwt.refreshSecret, options);
 }

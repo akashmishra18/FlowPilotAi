@@ -1,6 +1,8 @@
 import { NextFunction, Request, Response } from 'express';
 import { verifyAccessToken } from '../utils/jwt';
 import { AppError } from '../utils/AppError';
+import { RefreshTokenModel } from '../models/RefreshToken';
+import { UserModel } from '../models/User';
 
 /**
  * Expects `Authorization: Bearer <accessToken>`. On success, attaches
@@ -18,8 +20,27 @@ export function authenticate(req: Request, _res: Response, next: NextFunction): 
 
   try {
     const payload = verifyAccessToken(token);
-    req.user = { id: payload.sub, role: payload.role };
-    next();
+    const activeUser = UserModel.findById(payload.sub).select('isActive');
+    if (!payload.familyId) {
+      activeUser.then((user) => {
+        if (!user?.isActive) throw new AppError('Invalid or inactive account', 401);
+        req.user = { id: payload.sub, role: payload.role };
+        next();
+      })
+      .catch(next);
+      return;
+    }
+
+    Promise.all([
+      activeUser,
+      RefreshTokenModel.exists({ userId: payload.sub, familyId: payload.familyId, revokedAt: null, expiresAt: { $gt: new Date() } }),
+    ])
+      .then(([user, activeSession]) => {
+        if (!user?.isActive || !activeSession) throw new AppError('Invalid or revoked session', 401);
+        req.user = { id: payload.sub, role: payload.role };
+        next();
+      })
+      .catch(next);
   } catch {
     throw new AppError('Invalid or expired access token', 401);
   }

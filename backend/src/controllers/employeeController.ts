@@ -4,14 +4,14 @@ import { sendSuccess } from '../utils/apiResponse';
 import * as employeeService from '../services/employeeService';
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
-  const employee = await employeeService.createEmployee(req.body);
+  const employee = await employeeService.createEmployee(req.user!, req.body);
   sendSuccess(res, { employee }, 201, 'Employee created successfully');
 });
 
 export const list = asyncHandler(async (req: Request, res: Response) => {
   const { page, limit, department, designation, isActive, search } = req.query;
 
-  const result = await employeeService.getEmployees({
+  const result = await employeeService.getEmployees(req.user!, {
     page: page ? Number(page) : undefined,
     limit: limit ? Number(limit) : undefined,
     department: department as string | undefined,
@@ -25,7 +25,7 @@ export const list = asyncHandler(async (req: Request, res: Response) => {
 
 export const getMe = asyncHandler(async (req: Request, res: Response) => {
   // req.user is guaranteed by the `authenticate` middleware.
-  const employee = await employeeService.getCurrentEmployeeProfile(req.user!.id);
+  const employee = await employeeService.getCurrentEmployeeProfile(req.user!);
   sendSuccess(res, { employee });
 });
 
@@ -35,7 +35,7 @@ export const getById = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const update = asyncHandler(async (req: Request, res: Response) => {
-  const employee = await employeeService.updateEmployee(req.params.id, req.body);
+  const employee = await employeeService.updateEmployee(req.user!, req.params.id, req.body);
   sendSuccess(res, { employee }, 200, 'Employee updated successfully');
 });
 

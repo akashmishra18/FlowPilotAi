@@ -1,4 +1,4 @@
-import { apiClient } from './apiClient';
+import { apiClient, refreshAccessToken } from './apiClient';
 import { CurrentUser } from '@/store/authStore';
 
 interface AuthResponse {
@@ -26,6 +26,5 @@ export async function fetchCurrentUser(): Promise<CurrentUser> {
 }
 
 export async function refreshSessionRequest(): Promise<AuthResponse> {
-  const res = await apiClient.post('/auth/refresh');
-  return res.data.data as AuthResponse;
+  return refreshAccessToken() as Promise<AuthResponse>;
 }

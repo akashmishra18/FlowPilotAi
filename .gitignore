@@ -12,6 +12,7 @@ build/
 
 # Logs
 *.log
+/backend/logs/agent-parser-diagnostics.log
 npm-debug.log*
 
 # OS/editor
@@ -21,6 +22,3 @@ npm-debug.log*
 
 # Testing
 coverage/
-
-# TypeScript incremental build cache
-*.tsbuildinfo

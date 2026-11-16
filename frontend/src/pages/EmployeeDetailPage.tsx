@@ -1,153 +1,157 @@
-import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, LoaderCircle, Pencil, Power } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import { Lock, Pencil, Power, SearchX } from 'lucide-react';
+import { Alert, Avatar, Badge, Button, Card, ConfirmDialog, EmptyState, PageHeader, Skeleton, buttonClasses } from '@/components/ui';
 import RoleGate from '@/components/RoleGate';
+import { useAsyncData } from '@/hooks/useAsyncData';
 import { getEmployeeById, updateEmployeeStatus } from '@/features/employees/employeesApi';
-import { Employee } from '@/features/employees/types';
 import EditEmployeeModal from '@/features/employees/EditEmployeeModal';
-import { getFriendlyErrorMessage } from '@/services/errorHelpers';
+import { parseApiError } from '@/services/errorHelpers';
+import { toast } from '@/store/toastStore';
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-xs text-slate-400">{label}</dt>
+      <dd className="mt-0.5 text-sm font-medium text-slate-100">{value}</dd>
+    </div>
+  );
+}
 
 export default function EmployeeDetailPage() {
-  const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  const [employee, setEmployee] = useState<Employee | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [isTogglingStatus, setIsTogglingStatus] = useState(false);
+  const { id = '' } = useParams<{ id: string }>();
+  const fetcher = useCallback(() => getEmployeeById(id), [id]);
+  const { data: employee, error, errorStatus, isInitialLoading, reload } = useAsyncData(fetcher, 'Could not load this employee.');
 
-  const fetchEmployee = useCallback(async () => {
-    if (!id) return;
-    setIsLoading(true);
-    setError(null);
-    try {
-      const result = await getEmployeeById(id);
-      setEmployee(result);
-    } catch (err) {
-      setError(getFriendlyErrorMessage(err, 'Could not load this employee.'));
-    } finally {
-      setIsLoading(false);
-    }
-  }, [id]);
-
-  useEffect(() => {
-    fetchEmployee();
-  }, [fetchEmployee]);
+  const [showEdit, setShowEdit] = useState(false);
+  const [confirmStatus, setConfirmStatus] = useState(false);
+  const [isBusy, setIsBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   async function handleToggleStatus() {
     if (!employee) return;
-    setIsTogglingStatus(true);
+    setIsBusy(true);
+    setActionError(null);
     try {
-      const updated = await updateEmployeeStatus(employee._id, !employee.isActive);
-      setEmployee(updated);
+      await updateEmployeeStatus(employee._id, !employee.isActive);
+      toast.success(employee.isActive ? 'Employee deactivated.' : 'Employee activated.');
+      setConfirmStatus(false);
+      // The status endpoint returns the unpopulated record, so refetch to keep the user details.
+      await reload();
     } catch (err) {
-      setError(getFriendlyErrorMessage(err));
+      setConfirmStatus(false);
+      setActionError(parseApiError(err, 'Could not change the status.').message);
     } finally {
-      setIsTogglingStatus(false);
+      setIsBusy(false);
     }
   }
 
-  if (isLoading) {
+  const back = (
+    <Link to="/employees" className={buttonClasses({ variant: 'secondary' })}>
+      Back to employees
+    </Link>
+  );
+
+  if (isInitialLoading && !employee) {
     return (
-      <div className="flex items-center justify-center py-24 text-gray-400 text-sm gap-2">
-        <LoaderCircle className="w-4 h-4 animate-spin" /> Loading employee...
+      <div role="status" aria-busy="true" aria-label="Loading employee">
+        <Skeleton className="h-64" />
       </div>
     );
   }
-
-  if (error && !employee) {
+  if (!employee) {
+    if (errorStatus === 404) return <EmptyState icon={SearchX} title="Employee not found" action={back} />;
+    if (errorStatus === 403) return <EmptyState icon={Lock} title="You don't have access to this employee" action={back} />;
     return (
-      <div className="max-w-2xl mx-auto px-6 py-10">
-        <button onClick={() => navigate('/employees')} className="text-sm text-gray-500 flex items-center gap-1 mb-4">
-          <ArrowLeft className="w-4 h-4" /> Back to Employees
-        </button>
-        <div className="rounded-lg bg-red-50 text-red-700 text-sm px-4 py-3">{error}</div>
-      </div>
+      <Alert
+        tone="error"
+        title="Couldn't load this employee"
+        action={
+          <Button size="sm" onClick={() => void reload()}>
+            Retry
+          </Button>
+        }
+      >
+        {error}
+      </Alert>
     );
   }
 
-  if (!employee) return null;
+  const name = employee.user?.name ?? employee.employeeId;
 
   return (
-    <div className="max-w-2xl mx-auto px-6 py-10">
-      <button onClick={() => navigate('/employees')} className="text-sm text-gray-500 flex items-center gap-1 mb-4">
-        <ArrowLeft className="w-4 h-4" /> Back to Employees
-      </button>
-
-      {error && <div className="mb-4 rounded-lg bg-red-50 text-red-700 text-sm px-4 py-2.5">{error}</div>}
-
-      <div className="bg-white border border-gray-200 rounded-xl p-6">
-        <div className="flex items-start justify-between mb-6">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900">{employee.user?.name ?? employee.employeeId}</h2>
-            <p className="text-sm text-gray-500">{employee.user?.email}</p>
-          </div>
-          <span
-            className={
-              employee.isActive
-                ? 'inline-block px-2 py-0.5 rounded-full text-xs bg-green-50 text-green-700'
-                : 'inline-block px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-500'
-            }
-          >
+    <div className="mx-auto max-w-3xl">
+      <PageHeader
+        back={{ to: '/employees', label: 'Back to employees' }}
+        title={name}
+        description={employee.user?.email}
+        badge={
+          <Badge tone={employee.isActive ? 'success' : 'neutral'} dot>
             {employee.isActive ? 'Active' : 'Inactive'}
-          </span>
-        </div>
+          </Badge>
+        }
+      />
 
-        <dl className="grid grid-cols-2 gap-4 text-sm mb-6">
+      {actionError && (
+        <Alert tone="error" className="mb-4">
+          {actionError}
+        </Alert>
+      )}
+
+      <Card>
+        <div className="mb-5 flex items-center gap-3">
+          <Avatar name={name} size="lg" />
+          <div className="flex-1" />
+          <RoleGate allow={['ADMIN', 'MANAGER']}>
+            <Button size="sm" onClick={() => setShowEdit(true)}>
+              <Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit
+            </Button>
+          </RoleGate>
+          <RoleGate allow={['ADMIN']}>
+            <Button size="sm" variant={employee.isActive ? 'danger' : 'secondary'} onClick={() => setConfirmStatus(true)}>
+              <Power className="h-3.5 w-3.5" aria-hidden="true" /> {employee.isActive ? 'Deactivate' : 'Activate'}
+            </Button>
+          </RoleGate>
+        </div>
+        <dl className="grid grid-cols-2 gap-5 sm:grid-cols-3">
           <Detail label="Employee ID" value={employee.employeeId} />
           <Detail label="Department" value={employee.department} />
           <Detail label="Designation" value={employee.designation} />
           <Detail label="Phone" value={employee.phone ?? '—'} />
           <Detail label="Joined" value={new Date(employee.joinedAt).toLocaleDateString()} />
-          <Detail label="Role" value={employee.user?.role ?? '—'} />
-          <Detail label="Skills" value={employee.skills?.length ? employee.skills.join(', ') : '—'} />
+          <Detail label="Account role" value={employee.user?.role.replace('_', ' ') ?? '—'} />
+          <div className="col-span-2 sm:col-span-3">
+            <Detail label="Skills" value={employee.skills?.length ? employee.skills.join(', ') : '—'} />
+          </div>
         </dl>
+      </Card>
 
-        <div className="flex gap-2">
-          <RoleGate allow={['ADMIN', 'MANAGER']}>
-            <button
-              onClick={() => setShowEditModal(true)}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
-            >
-              <Pencil className="w-4 h-4" /> Edit
-            </button>
-          </RoleGate>
-          <RoleGate allow={['ADMIN']}>
-            <button
-              onClick={handleToggleStatus}
-              disabled={isTogglingStatus}
-              className={
-                employee.isActive
-                  ? 'flex items-center gap-2 px-4 py-2 text-sm font-medium text-red-700 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-60'
-                  : 'flex items-center gap-2 px-4 py-2 text-sm font-medium text-green-700 border border-green-200 rounded-lg hover:bg-green-50 disabled:opacity-60'
-              }
-            >
-              {isTogglingStatus ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <Power className="w-4 h-4" />}
-              {employee.isActive ? 'Deactivate' : 'Activate'}
-            </button>
-          </RoleGate>
-        </div>
-      </div>
-
-      {showEditModal && (
+      {showEdit && (
         <EditEmployeeModal
           employee={employee}
-          onClose={() => setShowEditModal(false)}
-          onUpdated={(updated) => {
-            setEmployee((prev) => (prev ? { ...prev, ...updated } : updated));
-            setShowEditModal(false);
+          onClose={() => setShowEdit(false)}
+          onUpdated={() => {
+            setShowEdit(false);
+            void reload();
           }}
         />
       )}
-    </div>
-  );
-}
 
-function Detail({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-gray-400 text-xs mb-0.5">{label}</dt>
-      <dd className="text-gray-900 font-medium">{value}</dd>
+      {confirmStatus && (
+        <ConfirmDialog
+          title={employee.isActive ? 'Deactivate this employee?' : 'Activate this employee?'}
+          message={
+            employee.isActive
+              ? `${name} will be marked inactive and their user account will no longer be able to sign in.`
+              : `${name} will be marked active and their user account will be able to sign in again.`
+          }
+          confirmLabel={employee.isActive ? 'Deactivate' : 'Activate'}
+          tone={employee.isActive ? 'danger' : 'primary'}
+          isLoading={isBusy}
+          onConfirm={() => void handleToggleStatus()}
+          onCancel={() => setConfirmStatus(false)}
+        />
+      )}
     </div>
   );
 }

@@ -11,6 +11,7 @@ export interface EmployeeDocument extends Document {
   joinedAt: Date;
   managerId: Types.ObjectId | null;
   isActive: boolean;
+  demoSeedKey?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -61,11 +62,14 @@ const employeeSchema = new Schema<EmployeeDocument>(
       type: Boolean,
       default: true,
     },
+    demoSeedKey: { type: String, select: false },
   },
   {
     timestamps: true,
   },
 );
+
+employeeSchema.index({ demoSeedKey: 1 }, { unique: true, sparse: true });
 
 // Supports the /api/employees list filters (department, isActive) without
 // a full collection scan once employee counts grow.

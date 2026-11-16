@@ -41,6 +41,9 @@ async function seedAdmin(): Promise<void> {
 
   const existing = await UserModel.findOne({ email: email.toLowerCase() });
   if (existing) {
+    if (existing.role !== 'ADMIN' || !existing.isActive) {
+      throw new Error(`Configured admin email ${email} belongs to an incompatible account (role=${existing.role}, active=${existing.isActive}). No changes made.`);
+    }
     logger.info(`Admin account already exists for ${email} — no changes made.`);
     await disconnectDatabase();
     return;

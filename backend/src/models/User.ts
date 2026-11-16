@@ -8,6 +8,7 @@ export interface UserDocument extends Document {
   passwordHash: string;
   role: Role;
   isActive: boolean;
+  demoSeedKey?: string;
   lastLoginAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -48,6 +49,8 @@ const userSchema = new Schema<UserDocument>(
       type: Date,
       default: null,
     },
+    // Hidden from normal API projections; used only by the guarded local demo cleanup.
+    demoSeedKey: { type: String, select: false },
   },
   {
     timestamps: true,
@@ -60,5 +63,7 @@ const userSchema = new Schema<UserDocument>(
     },
   },
 );
+
+userSchema.index({ demoSeedKey: 1 }, { unique: true, sparse: true });
 
 export const UserModel = model<UserDocument>('User', userSchema);

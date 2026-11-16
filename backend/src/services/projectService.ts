@@ -1,7 +1,10 @@
-import { Types } from 'mongoose';
+import mongoose, { Types } from 'mongoose';
 import { ProjectModel, ProjectDocument } from '../models/Project';
 import { EmployeeModel } from '../models/Employee';
 import { UserModel } from '../models/User';
+import { TaskModel } from '../models/Task';
+import { recordAuditEvent, recordAuditFailure } from './auditService';
+import { env } from '../config/env';
 import { AppError } from '../utils/AppError';
 import { escapeRegex } from '../utils/regex';
 import { Role, ProjectStatus, ProjectPriority } from '../config/constants';
@@ -42,6 +45,10 @@ const PUBLIC_EMPLOYEE_FIELDS = 'employeeId department designation isActive';
 
 const MANAGER_ELIGIBLE_ROLES: Role[] = ['ADMIN', 'MANAGER'];
 
+function assertAdmin(requestingUser: RequestingUser): void {
+  if (requestingUser.role !== 'ADMIN') throw new AppError('Only an admin can perform this action', 403);
+}
+
 /**
  * Only these fields are ever written by PATCH /api/projects/:id. status,
  * managerId, members, and isActive all have their own dedicated endpoints
@@ -73,9 +80,10 @@ function extractId(value: unknown): string | null {
  * `requireRole('ADMIN', 'MANAGER')` cannot express on its own, since it
  * depends on which specific project is being touched.
  */
-function assertCanManageProject(requestingUser: RequestingUser, project: ProjectDocument): void {
+async function assertCanManageProject(requestingUser: RequestingUser, project: ProjectDocument): Promise<void> {
   if (requestingUser.role === 'ADMIN') return;
   if (requestingUser.role === 'MANAGER' && project.managerId.toString() === requestingUser.id) return;
+  await recordAuditFailure({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'PROJECT_MUTATION_UNAUTHORIZED', targetType: 'Project', targetId: project._id.toString(), error: { code: '403', message: 'Unauthorized project mutation' } });
   throw new AppError('You do not have permission to manage this project', 403);
 }
 
@@ -122,15 +130,15 @@ async function resolveAndValidateMembers(memberIds: string[]): Promise<Types.Obj
   return employees.map((e) => e._id as Types.ObjectId);
 }
 
-async function assertValidManager(managerId: string): Promise<void> {
-  assertValidObjectId(managerId, 'managerId');
-  const manager = await UserModel.findById(managerId).select('role').lean();
-  if (!manager) {
-    throw new AppError('No user found with the provided managerId', 400);
-  }
-  if (!MANAGER_ELIGIBLE_ROLES.includes(manager.role)) {
-    throw new AppError('The assigned manager must have the MANAGER or ADMIN role', 400);
-  }
+async function assertValidManager(managerId: string, actor?: RequestingUser, targetId = managerId): Promise<void> {
+  const fail = async (message: string, code = 400): Promise<never> => {
+    if (actor) await recordAuditFailure({ actorUserId: actor.id, actorRole: actor.role, action: 'PROJECT_MANAGER_ASSIGNMENT_FAILED', targetType: 'Project', targetId, error: { code: String(code), message } });
+    throw new AppError(message, code);
+  };
+  if (!Types.ObjectId.isValid(managerId)) return fail('Invalid managerId');
+  const manager = await UserModel.findById(managerId).select('role isActive').lean();
+  if (!manager) return fail('No user found with the provided managerId');
+  if (manager.isActive === false || !MANAGER_ELIGIBLE_ROLES.includes(manager.role)) return fail('The assigned manager must have the MANAGER or ADMIN role');
 }
 
 function assertDeadlineNotBeforeStart(startDate: unknown, deadline: unknown): void {
@@ -140,8 +148,9 @@ function assertDeadlineNotBeforeStart(startDate: unknown, deadline: unknown): vo
   }
 }
 
-export async function createProject(input: CreateProjectInput): Promise<ProjectDocument> {
-  await assertValidManager(input.managerId);
+export async function createProject(requestingUser: RequestingUser, input: CreateProjectInput): Promise<ProjectDocument> {
+  assertAdmin(requestingUser);
+  await assertValidManager(input.managerId, requestingUser);
 
   const existingByCode = await ProjectModel.findOne({ projectCode: input.projectCode.toUpperCase() });
   if (existingByCode) {
@@ -164,6 +173,8 @@ export async function createProject(input: CreateProjectInput): Promise<ProjectD
     members: memberIds,
     createdBy: input.createdBy,
   });
+
+  await recordAuditEvent({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'PROJECT_CREATED', targetType: 'Project', targetId: project._id.toString(), outcome: 'SUCCESS', after: { projectCode: project.projectCode, managerId: project.managerId, members: project.members } });
 
   return project;
 }
@@ -250,7 +261,7 @@ export async function updateProject(
     throw new AppError('Project not found', 404);
   }
 
-  assertCanManageProject(requestingUser, project);
+  await assertCanManageProject(requestingUser, project);
 
   const nextStart = updates.startDate ?? project.startDate;
   const nextDeadline = updates.deadline ?? project.deadline;
@@ -263,6 +274,7 @@ export async function updateProject(
   }
 
   await project.save();
+  await recordAuditEvent({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'PROJECT_UPDATED', targetType: 'Project', targetId: id, outcome: 'SUCCESS', before: { startDate: project.startDate, deadline: project.deadline }, after: { startDate: project.startDate, deadline: project.deadline } });
   return project;
 }
 
@@ -278,10 +290,11 @@ export async function updateProjectStatus(
     throw new AppError('Project not found', 404);
   }
 
-  assertCanManageProject(requestingUser, project);
+  await assertCanManageProject(requestingUser, project);
 
   project.status = status;
   await project.save();
+  await recordAuditEvent({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'PROJECT_STATUS_CHANGED', targetType: 'Project', targetId: id, outcome: 'SUCCESS', after: { status } });
   return project;
 }
 
@@ -291,9 +304,10 @@ export async function updateProjectStatus(
  * project management — a MANAGER should not be able to hand their project
  * to someone else, or claim a project they don't already manage.
  */
-export async function assignManager(id: string, newManagerId: string): Promise<ProjectDocument> {
+export async function assignManager(requestingUser: RequestingUser, id: string, newManagerId: string): Promise<ProjectDocument> {
+  assertAdmin(requestingUser);
   assertValidObjectId(id);
-  await assertValidManager(newManagerId);
+  await assertValidManager(newManagerId, requestingUser, id);
 
   const project = await ProjectModel.findById(id);
   if (!project) {
@@ -302,6 +316,7 @@ export async function assignManager(id: string, newManagerId: string): Promise<P
 
   project.managerId = new Types.ObjectId(newManagerId);
   await project.save();
+  await recordAuditEvent({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'PROJECT_MANAGER_CHANGED', targetType: 'Project', targetId: id, outcome: 'SUCCESS', after: { managerId: project.managerId } });
   return project;
 }
 
@@ -318,23 +333,35 @@ export async function addMember(
     throw new AppError('Project not found', 404);
   }
 
-  assertCanManageProject(requestingUser, project);
+  await assertCanManageProject(requestingUser, project);
+
+  // An inactive project is archival work: do not create new active
+  // membership relationships after it has been deactivated. Existing
+  // members/tasks remain available for history and cleanup operations.
+  if (project.isActive === false) {
+    await recordAuditFailure({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'PROJECT_MEMBER_ADD_FAILED', targetType: 'Project', targetId: id, error: { code: '400', message: 'Inactive projects cannot accept new members' } });
+    throw new AppError('Inactive projects cannot accept new members', 400);
+  }
 
   const employee = await EmployeeModel.findById(employeeId).select('_id isActive').lean();
   if (!employee) {
+    await recordAuditFailure({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'PROJECT_MEMBER_ADD_FAILED', targetType: 'Project', targetId: id, error: { code: '400', message: 'No employee found' } });
     throw new AppError('No employee found with the provided id', 400);
   }
   if (!employee.isActive) {
+    await recordAuditFailure({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'PROJECT_MEMBER_ADD_FAILED', targetType: 'Project', targetId: id, error: { code: '400', message: 'Inactive employee' } });
     throw new AppError('Inactive employees cannot be added as project members', 400);
   }
 
   const alreadyMember = project.members.some((memberId) => memberId.toString() === employeeId);
   if (alreadyMember) {
+    await recordAuditFailure({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'PROJECT_MEMBER_ADD_FAILED', targetType: 'Project', targetId: id, error: { code: '409', message: 'Employee already a member' } });
     throw new AppError('This employee is already a member of the project', 409);
   }
 
   project.members.push(employee._id as Types.ObjectId);
   await project.save();
+  await recordAuditEvent({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'PROJECT_MEMBER_ADDED', targetType: 'Project', targetId: id, outcome: 'SUCCESS', after: { employeeId } });
   return project;
 }
 
@@ -351,20 +378,42 @@ export async function removeMember(
     throw new AppError('Project not found', 404);
   }
 
-  assertCanManageProject(requestingUser, project);
+  await assertCanManageProject(requestingUser, project);
 
   const originalLength = project.members.length;
   project.members = project.members.filter((memberId) => memberId.toString() !== employeeId) as Types.ObjectId[];
 
   if (project.members.length === originalLength) {
+    await recordAuditFailure({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'PROJECT_MEMBER_REMOVE_FAILED', targetType: 'Project', targetId: id, error: { code: '404', message: 'Employee is not a member' } });
     throw new AppError('This employee is not a member of the project', 404);
   }
 
-  await project.save();
+  const reconcile = async (session?: mongoose.ClientSession) => {
+    if (session) await project.save({ session });
+    else await project.save();
+    // Preserve task history while preventing assignments to a removed member.
+    if (session) await TaskModel.updateMany({ projectId: project._id, assignedTo: employeeId }, { $set: { assignedTo: null } }, { session });
+    else await TaskModel.updateMany({ projectId: project._id, assignedTo: employeeId }, { $set: { assignedTo: null } });
+  };
+
+  if (mongoose.connection.readyState !== 1 && env.nodeEnv === 'test') {
+    await reconcile();
+  } else if (mongoose.connection.readyState !== 1) {
+    throw new AppError('Transactional project membership operation is unavailable', 503);
+  } else {
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(() => reconcile(session));
+    } finally {
+      await session.endSession();
+    }
+  }
+  await recordAuditEvent({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'PROJECT_MEMBER_REMOVED', targetType: 'Project', targetId: id, outcome: 'SUCCESS', after: { employeeId } });
   return project;
 }
 
-export async function deactivateProject(id: string): Promise<ProjectDocument> {
+export async function deactivateProject(requestingUser: RequestingUser, id: string): Promise<ProjectDocument> {
+  assertAdmin(requestingUser);
   assertValidObjectId(id);
 
   const project = await ProjectModel.findById(id);
@@ -377,5 +426,6 @@ export async function deactivateProject(id: string): Promise<ProjectDocument> {
 
   project.isActive = false;
   await project.save();
+  await recordAuditEvent({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'PROJECT_DEACTIVATED', targetType: 'Project', targetId: id, outcome: 'SUCCESS', before: { isActive: true }, after: { isActive: false } });
   return project;
 }

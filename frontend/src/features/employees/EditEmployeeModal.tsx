@@ -1,9 +1,9 @@
 import { FormEvent, useState } from 'react';
-import { LoaderCircle } from 'lucide-react';
-import Modal from '@/components/Modal';
+import { Alert, Button, Field, Input, Modal } from '@/components/ui';
+import { parseApiError } from '@/services/errorHelpers';
+import { toast } from '@/store/toastStore';
 import { updateEmployee } from './employeesApi';
 import { Employee } from './types';
-import { getFriendlyErrorMessage } from '@/services/errorHelpers';
 
 interface EditEmployeeModalProps {
   employee: Employee;
@@ -12,32 +12,50 @@ interface EditEmployeeModalProps {
 }
 
 export default function EditEmployeeModal({ employee, onClose, onUpdated }: EditEmployeeModalProps) {
-  const [department, setDepartment] = useState(employee.department);
-  const [designation, setDesignation] = useState(employee.designation);
-  const [phone, setPhone] = useState(employee.phone ?? '');
-  const [joinedAt, setJoinedAt] = useState(employee.joinedAt?.slice(0, 10) ?? '');
-  const [skills, setSkills] = useState(employee.skills?.join(', ') ?? '');
-  const [error, setError] = useState<string | null>(null);
+  const [values, setValues] = useState({
+    department: employee.department,
+    designation: employee.designation,
+    phone: employee.phone ?? '',
+    joinedAt: employee.joinedAt?.slice(0, 10) ?? '',
+    skills: employee.skills?.join(', ') ?? '',
+  });
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const set = (key: keyof typeof values) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    setValues((v) => ({ ...v, [key]: e.target.value }));
+    setErrors((prev) => ({ ...prev, [key]: '' }));
+  };
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setError(null);
+    setFormError(null);
+
+    const found: Record<string, string> = {};
+    if (!values.department.trim()) found.department = 'Department is required.';
+    if (!values.designation.trim()) found.designation = 'Designation is required.';
+    setErrors(found);
+    if (Object.keys(found).length > 0) return;
+
     setIsSubmitting(true);
     try {
       const updated = await updateEmployee(employee._id, {
-        department: department.trim(),
-        designation: designation.trim(),
-        phone: phone.trim(),
-        joinedAt: joinedAt || undefined,
-        skills: skills
+        department: values.department.trim(),
+        designation: values.designation.trim(),
+        phone: values.phone.trim(),
+        joinedAt: values.joinedAt || undefined,
+        skills: values.skills
           .split(',')
           .map((s) => s.trim())
           .filter(Boolean),
       });
+      toast.success('Employee updated.');
       onUpdated(updated);
     } catch (err) {
-      setError(getFriendlyErrorMessage(err));
+      const parsed = parseApiError(err, 'Could not update the employee.');
+      if (parsed.status === 422) setErrors(parsed.fieldErrors);
+      setFormError(parsed.status === 422 ? 'Please fix the highlighted fields.' : parsed.message);
     } finally {
       setIsSubmitting(false);
     }
@@ -45,57 +63,38 @@ export default function EditEmployeeModal({ employee, onClose, onUpdated }: Edit
 
   return (
     <Modal title={`Edit ${employee.employeeId}`} onClose={onClose}>
-      {error && <div className="mb-4 rounded-lg bg-red-50 text-red-700 text-sm px-4 py-2.5">{error}</div>}
-
-      <form onSubmit={handleSubmit} className="space-y-3">
-        <Field label="Department">
-          <input required value={department} onChange={(e) => setDepartment(e.target.value)} className="input" />
+      {formError && (
+        <Alert tone="error" className="mb-4">
+          {formError}
+        </Alert>
+      )}
+      <form onSubmit={handleSubmit} noValidate className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Department" required error={errors.department}>
+            {(c) => <Input {...c} value={values.department} onChange={set('department')} />}
+          </Field>
+          <Field label="Designation" required error={errors.designation}>
+            {(c) => <Input {...c} value={values.designation} onChange={set('designation')} />}
+          </Field>
+          <Field label="Phone" error={errors.phone}>
+            {(c) => <Input {...c} type="tel" value={values.phone} onChange={set('phone')} />}
+          </Field>
+          <Field label="Joining date" error={errors.joinedAt}>
+            {(c) => <Input {...c} type="date" value={values.joinedAt} onChange={set('joinedAt')} />}
+          </Field>
+        </div>
+        <Field label="Skills" error={errors.skills} hint="Comma-separated, e.g. Unity, C#, Level design.">
+          {(c) => <Input {...c} value={values.skills} onChange={set('skills')} />}
         </Field>
-        <Field label="Designation">
-          <input required value={designation} onChange={(e) => setDesignation(e.target.value)} className="input" />
-        </Field>
-        <Field label="Phone">
-          <input value={phone} onChange={(e) => setPhone(e.target.value)} className="input" />
-        </Field>
-        <Field label="Joining Date">
-          <input type="date" value={joinedAt} onChange={(e) => setJoinedAt(e.target.value)} className="input" />
-        </Field>
-        <Field label="Skills (comma-separated)">
-          <input
-            value={skills}
-            onChange={(e) => setSkills(e.target.value)}
-            className="input"
-            placeholder="Unity, C#, Level Design"
-          />
-        </Field>
-
         <div className="flex justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg"
-          >
+          <Button variant="ghost" onClick={onClose} disabled={isSubmitting}>
             Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 disabled:opacity-60 rounded-lg"
-          >
-            {isSubmitting && <LoaderCircle className="w-4 h-4 animate-spin" />}
-            Save Changes
-          </button>
+          </Button>
+          <Button type="submit" variant="primary" isLoading={isSubmitting}>
+            Save changes
+          </Button>
         </div>
       </form>
     </Modal>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
-      {children}
-    </div>
   );
 }

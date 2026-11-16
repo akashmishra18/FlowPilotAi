@@ -13,6 +13,7 @@ export interface TaskDocument extends Document {
   dueDate: Date | null;
   completedAt: Date | null;
   tags: string[];
+  demoSeedKey?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -31,9 +32,12 @@ const taskSchema = new Schema<TaskDocument>(
     dueDate: { type: Date, default: null },
     completedAt: { type: Date, default: null },
     tags: { type: [String], default: [] },
+    demoSeedKey: { type: String, select: false },
   },
   { timestamps: true },
 );
+
+taskSchema.index({ demoSeedKey: 1 }, { unique: true, sparse: true });
 
 // Single-field indexes: each backs one of the list filters on its own.
 taskSchema.index({ projectId: 1 });

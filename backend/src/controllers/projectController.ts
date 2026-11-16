@@ -4,7 +4,7 @@ import { sendSuccess } from '../utils/apiResponse';
 import * as projectService from '../services/projectService';
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
-  const project = await projectService.createProject({ ...req.body, createdBy: req.user!.id });
+  const project = await projectService.createProject(req.user!, { ...req.body, createdBy: req.user!.id });
   sendSuccess(res, { project }, 201, 'Project created successfully');
 });
 
@@ -40,7 +40,7 @@ export const updateStatus = asyncHandler(async (req: Request, res: Response) => 
 });
 
 export const updateManager = asyncHandler(async (req: Request, res: Response) => {
-  const project = await projectService.assignManager(req.params.id, req.body.managerId);
+  const project = await projectService.assignManager(req.user!, req.params.id, req.body.managerId);
   sendSuccess(res, { project }, 200, 'Project manager updated successfully');
 });
 
@@ -55,6 +55,6 @@ export const removeMember = asyncHandler(async (req: Request, res: Response) => 
 });
 
 export const deactivate = asyncHandler(async (req: Request, res: Response) => {
-  const project = await projectService.deactivateProject(req.params.id);
+  const project = await projectService.deactivateProject(req.user!, req.params.id);
   sendSuccess(res, { project }, 200, 'Project deactivated successfully');
 });

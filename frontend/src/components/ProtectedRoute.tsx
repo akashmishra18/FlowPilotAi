@@ -1,4 +1,5 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
+import { LoaderCircle } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 
 export default function ProtectedRoute() {
@@ -8,8 +9,8 @@ export default function ProtectedRoute() {
 
   if (isInitializing) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-sm text-gray-400">
-        Loading...
+      <div role="status" className="flex min-h-screen items-center justify-center gap-2 bg-canvas text-sm text-slate-400">
+        <LoaderCircle className="h-4 w-4 motion-safe:animate-spin" aria-hidden="true" /> Restoring your session…
       </div>
     );
   }

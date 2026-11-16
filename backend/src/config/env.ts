@@ -1,6 +1,9 @@
 import dotenv from 'dotenv';
+import path from 'path';
 
-dotenv.config();
+// Resolve the backend's own .env file regardless of the process working directory.
+// Existing process environment variables still take precedence (dotenv default).
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 /**
  * Central place to read environment variables.
@@ -46,6 +49,9 @@ export const env = {
     provider: process.env.AI_PROVIDER ?? 'mock',
     apiKey: process.env.AI_API_KEY ?? '',
     model: process.env.AI_MODEL ?? '',
+    baseUrl: process.env.AI_BASE_URL ?? '',
+    // Pricing is intentionally opt-in because provider account tiers vary.
+    pricingTier: process.env.AI_PRICING_TIER ?? '',
   },
 
   email: {

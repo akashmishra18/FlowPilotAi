@@ -3,15 +3,18 @@ import { Types } from 'mongoose';
 jest.mock('../../src/models/Task');
 jest.mock('../../src/models/Project');
 jest.mock('../../src/models/Employee');
+jest.mock('../../src/services/auditService');
 
 import { TaskModel } from '../../src/models/Task';
 import { ProjectModel } from '../../src/models/Project';
 import { EmployeeModel } from '../../src/models/Employee';
 import * as taskService from '../../src/services/taskService';
+import * as auditService from '../../src/services/auditService';
 
 const mockedTask = TaskModel as jest.Mocked<typeof TaskModel>;
 const mockedProject = ProjectModel as jest.Mocked<typeof ProjectModel>;
 const mockedEmployee = EmployeeModel as jest.Mocked<typeof EmployeeModel>;
+const mockedAudit = auditService as jest.Mocked<typeof auditService>;
 
 /** Fluent mongoose-query-like mock terminating in `lean()`. */
 function chainable(resolvedValue: unknown) {
@@ -236,6 +239,25 @@ describe('listTasks (role-scoped visibility and typed filters)', () => {
     );
   });
 
+  it('builds a scoped rule-based overdue assistant response', async () => {
+    mockedTask.find.mockReturnValueOnce(chainable([{
+      _id: taskId,
+      title: 'Fix crash',
+      projectId: { _id: projectId, name: 'Shooter', projectCode: 'FP-01' },
+      assignedTo: { _id: memberEmpId, employeeId: 'FP-10', userId: { name: 'Alex' } },
+      dueDate: new Date('2025-01-01'),
+      status: 'TODO',
+    }]));
+    mockedTask.countDocuments.mockResolvedValueOnce(1 as never);
+
+    const result = await taskService.getOverdueTaskAssistant(admin);
+
+    expect(result.summary).toBe('1 overdue incomplete task requires attention.');
+    expect(result.summarySource).toBe('RULE_BASED');
+    expect(result.tasks[0]).toEqual(expect.objectContaining({ title: 'Fix crash', assignedEmployee: { id: memberEmpId.toString(), employeeId: 'FP-10', name: 'Alex' } }));
+    expect(lastQuery().$and).toEqual(expect.arrayContaining([{ dueDate: { $lt: expect.any(Date) }, status: { $ne: 'COMPLETED' } }]));
+  });
+
   it('applies a dueDate range', async () => {
     await taskService.listTasks(admin, { dueDateFrom: '2025-01-01', dueDateTo: '2025-02-01' });
     expect(lastQuery().$and).toEqual(
@@ -360,6 +382,14 @@ describe('updateTask', () => {
       taskService.updateTask(manager, taskId, { assignedTo: memberEmpId.toString() }),
     ).rejects.toMatchObject({ statusCode: 400 });
     expect(task.save).not.toHaveBeenCalled();
+    expect(mockedAudit.recordAuditFailure).toHaveBeenCalledWith(expect.objectContaining({ action: 'TASK_ASSIGNMENT_FAILED', targetType: 'Task', targetId: taskId }));
+  });
+
+  it('rejects mutations on an inactive project', async () => {
+    const task = taskDoc();
+    primeContext(task, project({ isActive: false }));
+    await expect(taskService.updateTask(manager, taskId, { status: 'IN_PROGRESS' })).rejects.toMatchObject({ statusCode: 400 });
+    expect(task.save).not.toHaveBeenCalled();
   });
 
   it('assignee can move their task TODO -> IN_PROGRESS and edit description', async () => {
@@ -422,6 +452,47 @@ describe('assignTask', () => {
     primePopulatedResult();
     await taskService.assignTask(manager, taskId, memberEmpId.toString());
     expect(task.assignedTo).toBe(memberEmpId);
+  });
+
+  it('uses an atomic original-assignee compare-and-set for approval execution', async () => {
+    const task = taskDoc({ assignedTo: memberEmpId });
+    primeContext(task, project({ members: [otherEmpId] }));
+    mockedEmployee.findById.mockReturnValueOnce(chainable({ _id: otherEmpId, isActive: true }));
+    mockedTask.findOneAndUpdate.mockResolvedValueOnce({ _id: taskId } as never);
+    primePopulatedResult();
+
+    await taskService.assignTask(admin, taskId, otherEmpId.toString(), memberEmpId.toString());
+
+    expect(mockedTask.findOneAndUpdate).toHaveBeenCalledWith(
+      { _id: task._id, assignedTo: memberEmpId },
+      { $set: { assignedTo: otherEmpId } },
+      { new: true },
+    );
+    expect(task.save).not.toHaveBeenCalled();
+  });
+
+  it('does not write again when a retry finds the requested assignee already applied', async () => {
+    const task = taskDoc({ assignedTo: otherEmpId });
+    primeContext(task, project({ members: [otherEmpId] }));
+    mockedEmployee.findById.mockReturnValueOnce(chainable({ _id: otherEmpId, isActive: true }));
+    primePopulatedResult();
+
+    await taskService.assignTask(admin, taskId, otherEmpId.toString(), memberEmpId.toString());
+
+    expect(mockedTask.findOneAndUpdate).not.toHaveBeenCalled();
+    expect(task.save).not.toHaveBeenCalled();
+  });
+
+  it('treats a lost compare-and-set as success only if the concurrent assignment reached the same target', async () => {
+    const task = taskDoc({ assignedTo: memberEmpId });
+    primeContext(task, project({ members: [otherEmpId] }));
+    mockedEmployee.findById.mockReturnValueOnce(chainable({ _id: otherEmpId, isActive: true }));
+    mockedTask.findOneAndUpdate.mockResolvedValueOnce(null as never);
+    mockedTask.findById.mockResolvedValueOnce({ assignedTo: otherEmpId } as never);
+    primePopulatedResult();
+
+    await expect(taskService.assignTask(admin, taskId, otherEmpId.toString(), memberEmpId.toString())).resolves.toBeDefined();
+    expect(task.save).not.toHaveBeenCalled();
   });
 
   it('an assignee cannot reassign themselves or others', async () => {

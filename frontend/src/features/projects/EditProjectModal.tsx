@@ -1,10 +1,9 @@
 import { FormEvent, useState } from 'react';
-import { LoaderCircle } from 'lucide-react';
-import DarkModal from './DarkModal';
+import { Alert, Button, Field, Input, Modal, Select, Textarea } from '@/components/ui';
 import { updateProject } from './projectsApi';
-import { Project } from './types';
-import { darkInputClass, darkLabelClass } from './ui';
-import { getFriendlyErrorMessage } from '@/services/errorHelpers';
+import { Project, ProjectPriority } from './types';
+import { parseApiError } from '@/services/errorHelpers';
+import { toast } from '@/store/toastStore';
 
 interface EditProjectModalProps {
   project: Project;
@@ -13,93 +12,99 @@ interface EditProjectModalProps {
 }
 
 export default function EditProjectModal({ project, onClose, onUpdated }: EditProjectModalProps) {
-  const [name, setName] = useState(project.name);
-  const [description, setDescription] = useState(project.description);
-  const [clientName, setClientName] = useState(project.clientName);
-  const [priority, setPriority] = useState(project.priority);
-  const [startDate, setStartDate] = useState(project.startDate.slice(0, 10));
-  const [deadline, setDeadline] = useState(project.deadline?.slice(0, 10) ?? '');
-  const [error, setError] = useState<string | null>(null);
+  const [values, setValues] = useState({
+    name: project.name,
+    description: project.description,
+    clientName: project.clientName,
+    priority: project.priority as ProjectPriority,
+    startDate: project.startDate.slice(0, 10),
+    deadline: project.deadline?.slice(0, 10) ?? '',
+  });
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const set = <K extends keyof typeof values>(key: K, value: (typeof values)[K]) => {
+    setValues((v) => ({ ...v, [key]: value }));
+    setErrors((prev) => ({ ...prev, [key]: '' }));
+  };
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setError(null);
+    setFormError(null);
+
+    const found: Record<string, string> = {};
+    if (!values.name.trim()) found.name = 'Project name is required.';
+    if (!values.startDate) found.startDate = 'Start date is required.';
+    if (values.deadline && values.startDate && values.deadline < values.startDate) found.deadline = 'End date cannot be before the start date.';
+    setErrors(found);
+    if (Object.keys(found).length > 0) return;
+
     setIsSubmitting(true);
     try {
       await updateProject(project._id, {
-        name: name.trim(),
-        description: description.trim(),
-        clientName: clientName.trim(),
-        priority: priority as never,
-        startDate,
-        deadline: deadline || undefined,
+        name: values.name.trim(),
+        description: values.description.trim(),
+        clientName: values.clientName.trim(),
+        priority: values.priority,
+        startDate: values.startDate,
+        deadline: values.deadline || undefined,
       });
+      toast.success('Project updated.');
       onUpdated();
     } catch (err) {
-      setError(getFriendlyErrorMessage(err));
+      const parsed = parseApiError(err, 'Could not update the project.');
+      if (parsed.status === 422) setErrors(parsed.fieldErrors);
+      setFormError(parsed.status === 422 ? 'Please fix the highlighted fields.' : parsed.message);
     } finally {
       setIsSubmitting(false);
     }
   }
 
   return (
-    <DarkModal title={`Edit ${project.projectCode}`} onClose={onClose}>
-      {error && (
-        <div className="mb-4 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-300 text-sm px-4 py-2.5">
-          {error}
-        </div>
+    <Modal title={`Edit ${project.projectCode}`} onClose={onClose} size="lg">
+      {formError && (
+        <Alert tone="error" className="mb-4">
+          {formError}
+        </Alert>
       )}
-
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className={darkLabelClass}>Project Name</label>
-          <input required value={name} onChange={(e) => setName(e.target.value)} className={darkInputClass} />
+      <form onSubmit={handleSubmit} noValidate className="space-y-4">
+        <Field label="Project name" required error={errors.name}>
+          {(c) => <Input {...c} value={values.name} onChange={(e) => set('name', e.target.value)} />}
+        </Field>
+        <Field label="Description" error={errors.description}>
+          {(c) => <Textarea {...c} rows={2} value={values.description} onChange={(e) => set('description', e.target.value)} />}
+        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Client name" error={errors.clientName}>
+            {(c) => <Input {...c} value={values.clientName} onChange={(e) => set('clientName', e.target.value)} />}
+          </Field>
+          <Field label="Priority" error={errors.priority}>
+            {(c) => (
+              <Select {...c} value={values.priority} onChange={(e) => set('priority', e.target.value as ProjectPriority)}>
+                <option value="LOW">Low</option>
+                <option value="MEDIUM">Medium</option>
+                <option value="HIGH">High</option>
+                <option value="CRITICAL">Critical</option>
+              </Select>
+            )}
+          </Field>
+          <Field label="Start date" required error={errors.startDate}>
+            {(c) => <Input {...c} type="date" value={values.startDate} onChange={(e) => set('startDate', e.target.value)} />}
+          </Field>
+          <Field label="End date" error={errors.deadline}>
+            {(c) => <Input {...c} type="date" value={values.deadline} onChange={(e) => set('deadline', e.target.value)} />}
+          </Field>
         </div>
-        <div>
-          <label className={darkLabelClass}>Description</label>
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)} className={darkInputClass} rows={2} />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className={darkLabelClass}>Client Name</label>
-            <input value={clientName} onChange={(e) => setClientName(e.target.value)} className={darkInputClass} />
-          </div>
-          <div>
-            <label className={darkLabelClass}>Priority</label>
-            <select value={priority} onChange={(e) => setPriority(e.target.value as never)} className={darkInputClass}>
-              <option value="LOW">Low</option>
-              <option value="MEDIUM">Medium</option>
-              <option value="HIGH">High</option>
-              <option value="CRITICAL">Critical</option>
-            </select>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className={darkLabelClass}>Start Date</label>
-            <input required type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={darkInputClass} />
-          </div>
-          <div>
-            <label className={darkLabelClass}>End Date</label>
-            <input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} className={darkInputClass} />
-          </div>
-        </div>
-
         <div className="flex justify-end gap-2 pt-2">
-          <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-400 hover:bg-white/5 rounded-lg">
+          <Button variant="ghost" onClick={onClose} disabled={isSubmitting}>
             Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-500 disabled:opacity-60 rounded-lg transition-colors"
-          >
-            {isSubmitting && <LoaderCircle className="w-4 h-4 animate-spin" />}
-            Save Changes
-          </button>
+          </Button>
+          <Button type="submit" variant="primary" isLoading={isSubmitting}>
+            Save changes
+          </Button>
         </div>
       </form>
-    </DarkModal>
+    </Modal>
   );
 }

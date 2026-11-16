@@ -5,6 +5,8 @@ import { EmployeeModel } from '../models/Employee';
 import { AppError } from '../utils/AppError';
 import { escapeRegex } from '../utils/regex';
 import { Role, TaskPriority, TaskStatus, ASSIGNEE_TASK_TRANSITIONS } from '../config/constants';
+import { recordAuditEvent, recordAuditFailure } from './auditService';
+import { summarizeOverdueTasks } from '../ai/summarizeOverdueTasks';
 
 interface RequestingUser {
   id: string;
@@ -140,12 +142,21 @@ async function requireActor(
   requestingUser: RequestingUser,
   task: TaskDocument,
   project: ProjectContext,
+  action = 'TASK_ACCESS_FAILED',
 ): Promise<Actor> {
   const actor = await resolveAccess(requestingUser, project.managerId, task.assignedTo);
   if (!actor) {
+    await recordAuditFailure({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action, targetType: 'Task', targetId: task._id.toString(), error: { code: '403', message: 'Unauthorized task mutation' } });
     throw new AppError('You do not have permission to modify this task', 403);
   }
   return actor;
+}
+
+async function assertActiveProject(project: ProjectContext, requestingUser: RequestingUser, taskId: string): Promise<void> {
+  if (!project.isActive) {
+    await recordAuditFailure({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'TASK_INACTIVE_PROJECT_MUTATION_FAILED', targetType: 'Task', targetId: taskId, error: { code: '400', message: 'Tasks cannot be changed on an inactive project' } });
+    throw new AppError('Tasks cannot be changed on an inactive project', 400);
+  }
 }
 
 async function getPopulatedTask(id: unknown) {
@@ -160,27 +171,33 @@ async function getPopulatedTask(id: unknown) {
  * A task may only be assigned to an existing, active employee who is a
  * member of the task's project — the same team the Project model defines.
  */
-async function resolveAssignee(project: ProjectContext, employeeId: string): Promise<Types.ObjectId> {
-  assertValidObjectId(employeeId, 'assignedTo');
+async function resolveAssignee(project: ProjectContext, employeeId: string, requestingUser?: RequestingUser, taskId = employeeId): Promise<Types.ObjectId> {
+  if (!Types.ObjectId.isValid(employeeId)) {
+    if (requestingUser) await recordAuditFailure({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'TASK_ASSIGNMENT_FAILED', targetType: 'Task', targetId: taskId, error: { code: '400', message: 'Invalid assignedTo' } });
+    throw new AppError('Invalid assignedTo', 400);
+  }
 
   const employee = await EmployeeModel.findById(employeeId).select('_id isActive').lean();
   if (!employee) {
+    if (requestingUser) await recordAuditFailure({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'TASK_ASSIGNMENT_FAILED', targetType: 'Task', targetId: taskId, error: { code: '400', message: 'Employee not found' } });
     throw new AppError('No employee found with the provided assignedTo id', 400);
   }
   if (!employee.isActive) {
+    if (requestingUser) await recordAuditFailure({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'TASK_ASSIGNMENT_FAILED', targetType: 'Task', targetId: taskId, error: { code: '400', message: 'Inactive employee' } });
     throw new AppError('Inactive employees cannot be assigned tasks', 400);
   }
 
   const isMember = project.members.some((memberId) => String(memberId) === String(employee._id));
   if (!isMember) {
+    if (requestingUser) await recordAuditFailure({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'TASK_ASSIGNMENT_FAILED', targetType: 'Task', targetId: taskId, error: { code: '400', message: 'Employee is not a project member' } });
     throw new AppError('The employee must be a member of the project to be assigned its tasks', 400);
   }
 
   return employee._id as Types.ObjectId;
 }
 
-async function applyAssignment(task: TaskDocument, project: ProjectContext, assignedTo: string | null): Promise<void> {
-  task.assignedTo = assignedTo === null ? null : await resolveAssignee(project, assignedTo);
+async function applyAssignment(task: TaskDocument, project: ProjectContext, assignedTo: string | null, requestingUser?: RequestingUser): Promise<void> {
+  task.assignedTo = assignedTo === null ? null : await resolveAssignee(project, assignedTo, requestingUser, task._id.toString());
 }
 
 function applyStatus(task: TaskDocument, status: TaskStatus, actor: Actor): void {
@@ -214,7 +231,7 @@ export async function createTask(requestingUser: RequestingUser, input: CreateTa
     throw new AppError('Tasks cannot be created on an inactive project', 400);
   }
 
-  const assignedTo = input.assignedTo ? await resolveAssignee(project, input.assignedTo) : null;
+  const assignedTo = input.assignedTo ? await resolveAssignee(project, input.assignedTo, requestingUser, input.projectId) : null;
   const status = input.status ?? 'TODO';
 
   const task = await TaskModel.create({
@@ -229,6 +246,8 @@ export async function createTask(requestingUser: RequestingUser, input: CreateTa
     completedAt: status === 'COMPLETED' ? new Date() : null,
     tags: normalizeTags(input.tags ?? []),
   });
+
+  await recordAuditEvent({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'TASK_CREATED', targetType: 'Task', targetId: task._id.toString(), outcome: 'SUCCESS', after: { projectId: task.projectId, assignedTo: task.assignedTo, status: task.status } });
 
   return getPopulatedTask(task._id);
 }
@@ -313,6 +332,49 @@ export async function listTasks(requestingUser: RequestingUser, filters: ListTas
   };
 }
 
+/**
+ * Bounded assistant data source. It reuses the existing role-scoped task
+ * query before passing any task data to the configured summary provider.
+ */
+export async function getOverdueTaskAssistant(requestingUser: RequestingUser, requestId?: string) {
+  const result = await listTasks(requestingUser, { overdue: true, limit: 100, page: 1 });
+  const tasks = result.tasks.map((task) => {
+    const record = task as unknown as { _id: unknown; title: string; projectId?: unknown; assignedTo?: unknown; dueDate: string | null; status: string };
+    const project = record.projectId && typeof record.projectId === 'object' ? record.projectId as Record<string, unknown> : null;
+    const assignee = record.assignedTo && typeof record.assignedTo === 'object' ? record.assignedTo as Record<string, unknown> : null;
+    const assigneeUser = assignee?.userId && typeof assignee.userId === 'object' ? assignee.userId as Record<string, unknown> : null;
+    return {
+      id: String(record._id),
+      title: record.title,
+      project: project ? { id: String(project._id), name: String(project.name ?? ''), projectCode: String(project.projectCode ?? '') } : null,
+      assignedEmployee: assignee
+        ? { id: String(assignee._id), employeeId: String(assignee.employeeId ?? ''), name: assigneeUser?.name ? String(assigneeUser.name) : null }
+        : null,
+      dueDate: record.dueDate,
+      status: record.status,
+    };
+  });
+
+  const summary = await summarizeOverdueTasks(tasks, undefined, { userId: requestingUser.id, requestId: requestId ?? `overdue-assistant-${requestingUser.id}-${Date.now()}` });
+  return { ...summary, tasks, total: result.pagination.total };
+}
+
+/** Validates a reassignment proposal without changing the task. */
+export async function validateReassignmentRequest(requestingUser: RequestingUser, taskId: string, assignedTo: string) {
+  const { task, project } = await loadTaskContext(taskId);
+  const actor = await resolveAccess(requestingUser, project.managerId, task.assignedTo);
+  if (!actor) {
+    await recordAuditFailure({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'TASK_REASSIGNMENT_REQUEST_FAILED', targetType: 'Task', targetId: taskId, error: { code: '403', message: 'Requester cannot access this task' } });
+    throw new AppError('You do not have permission to request a change for this task', 403);
+  }
+  await assertActiveProject(project, requestingUser, taskId);
+  const resolved = await resolveAssignee(project, assignedTo, requestingUser, taskId);
+  if (String(task.assignedTo ?? '') === String(resolved)) {
+    throw new AppError('Task is already assigned to this employee', 400);
+  }
+  return { taskId: task._id, projectId: project._id, fromAssignedTo: task.assignedTo, assignedTo: resolved };
+}
+
 export async function getTaskById(requestingUser: RequestingUser, id: string) {
   assertValidObjectId(id);
 
@@ -343,7 +405,9 @@ export async function getTaskById(requestingUser: RequestingUser, id: string) {
  */
 export async function updateTask(requestingUser: RequestingUser, id: string, updates: UpdateTaskInput) {
   const { task, project } = await loadTaskContext(id);
-  const actor = await requireActor(requestingUser, task, project);
+  const actor = await requireActor(requestingUser, task, project, 'TASK_MUTATION_UNAUTHORIZED');
+  await assertActiveProject(project, requestingUser, id);
+  const before = { status: task.status, assignedTo: task.assignedTo, description: task.description };
 
   if (actor === 'assignee') {
     const forbidden = (Object.keys(updates) as (keyof UpdateTaskInput)[]).filter(
@@ -361,32 +425,64 @@ export async function updateTask(requestingUser: RequestingUser, id: string, upd
   if (updates.dueDate !== undefined) {
     task.dueDate = updates.dueDate === null ? null : parseDate(updates.dueDate, 'dueDate');
   }
-  if (updates.assignedTo !== undefined) await applyAssignment(task, project, updates.assignedTo);
+  if (updates.assignedTo !== undefined) await applyAssignment(task, project, updates.assignedTo, requestingUser);
   if (updates.status !== undefined) applyStatus(task, updates.status, actor);
 
   await task.save();
+  await recordAuditEvent({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: updates.assignedTo !== undefined ? 'TASK_REASSIGNED' : updates.status !== undefined ? 'TASK_STATUS_CHANGED' : 'TASK_UPDATED', targetType: 'Task', targetId: id, outcome: 'SUCCESS', before, after: { status: task.status, assignedTo: task.assignedTo, description: task.description } });
   return getPopulatedTask(task._id);
 }
 
 /** Assigning/reassigning is reserved for ADMIN and the project's MANAGER. */
-export async function assignTask(requestingUser: RequestingUser, id: string, assignedTo: string | null) {
+export async function assignTask(requestingUser: RequestingUser, id: string, assignedTo: string | null, expectedAssignedTo?: string | null) {
   const { task, project } = await loadTaskContext(id);
-  const actor = await requireActor(requestingUser, task, project);
+  const actor = await requireActor(requestingUser, task, project, 'TASK_MUTATION_UNAUTHORIZED');
   if (actor !== 'privileged') {
     throw new AppError('Only an admin or the project manager can assign tasks', 403);
   }
+  await assertActiveProject(project, requestingUser, id);
+  const currentId = extractId(task.assignedTo);
+  await applyAssignment(task, project, assignedTo, requestingUser);
 
-  await applyAssignment(task, project, assignedTo);
+  if (expectedAssignedTo !== undefined) {
+    const expectedId = extractId(expectedAssignedTo);
+    const targetId = extractId(assignedTo);
+    // A retry after a process interruption may find that the previous attempt
+    // already applied this exact assignment. Treat it as complete without a
+    // second write.
+    if (currentId === targetId) return getPopulatedTask(task._id);
+    if (currentId !== expectedId) {
+      throw new AppError('Task assignment changed after this request was submitted', 409);
+    }
+
+    const updated = await TaskModel.findOneAndUpdate(
+      { _id: task._id, assignedTo: expectedId ? new Types.ObjectId(expectedId) : null },
+      { $set: { assignedTo: task.assignedTo } },
+      { new: true },
+    );
+    if (!updated) {
+      // A concurrent safe retry may have won the compare-and-set first.
+      const current = await TaskModel.findById(task._id);
+      if (extractId(current?.assignedTo) === targetId) return getPopulatedTask(task._id);
+      throw new AppError('Task assignment changed while this request was executing', 409);
+    }
+    await recordAuditEvent({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'TASK_REASSIGNED', targetType: 'Task', targetId: id, outcome: 'SUCCESS', before: { assignedTo: expectedAssignedTo }, after: { assignedTo: task.assignedTo } });
+    return getPopulatedTask(task._id);
+  }
+
   await task.save();
+  await recordAuditEvent({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'TASK_REASSIGNED', targetType: 'Task', targetId: id, outcome: 'SUCCESS', after: { assignedTo: task.assignedTo } });
   return getPopulatedTask(task._id);
 }
 
 export async function updateTaskStatus(requestingUser: RequestingUser, id: string, status: TaskStatus) {
   const { task, project } = await loadTaskContext(id);
-  const actor = await requireActor(requestingUser, task, project);
+  const actor = await requireActor(requestingUser, task, project, 'TASK_MUTATION_UNAUTHORIZED');
+  await assertActiveProject(project, requestingUser, id);
 
   applyStatus(task, status, actor);
   await task.save();
+  await recordAuditEvent({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'TASK_STATUS_CHANGED', targetType: 'Task', targetId: id, outcome: 'SUCCESS', after: { status: task.status } });
   return getPopulatedTask(task._id);
 }
 
@@ -397,7 +493,7 @@ export async function updateTaskStatus(requestingUser: RequestingUser, id: strin
  */
 export async function deleteTask(requestingUser: RequestingUser, id: string): Promise<void> {
   const { task, project } = await loadTaskContext(id);
-  const actor = await requireActor(requestingUser, task, project);
+  const actor = await requireActor(requestingUser, task, project, 'TASK_MUTATION_UNAUTHORIZED');
 
   if (actor !== 'privileged') {
     throw new AppError('You do not have permission to delete this task', 403);
@@ -407,4 +503,5 @@ export async function deleteTask(requestingUser: RequestingUser, id: string): Pr
   }
 
   await TaskModel.deleteOne({ _id: task._id });
+  await recordAuditEvent({ actorUserId: requestingUser.id, actorRole: requestingUser.role, action: 'TASK_DELETED', targetType: 'Task', targetId: id, outcome: 'SUCCESS', before: { status: task.status, projectId: task.projectId } });
 }

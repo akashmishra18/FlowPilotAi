@@ -15,6 +15,7 @@ export interface ProjectDocument extends Document {
   members: Types.ObjectId[];
   isActive: boolean;
   createdBy: Types.ObjectId;
+  demoSeedKey?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -88,11 +89,14 @@ const projectSchema = new Schema<ProjectDocument>(
       ref: 'User',
       required: true,
     },
+    demoSeedKey: { type: String, select: false },
   },
   {
     timestamps: true,
   },
 );
+
+projectSchema.index({ demoSeedKey: 1 }, { unique: true, sparse: true });
 
 projectSchema.index({ status: 1 });
 projectSchema.index({ priority: 1 });

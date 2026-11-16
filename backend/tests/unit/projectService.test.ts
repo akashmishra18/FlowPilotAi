@@ -3,15 +3,21 @@ import { Types } from 'mongoose';
 jest.mock('../../src/models/Project');
 jest.mock('../../src/models/Employee');
 jest.mock('../../src/models/User');
+jest.mock('../../src/models/Task');
+jest.mock('../../src/services/auditService');
 
 import { ProjectModel } from '../../src/models/Project';
 import { EmployeeModel } from '../../src/models/Employee';
 import { UserModel } from '../../src/models/User';
+import { TaskModel } from '../../src/models/Task';
 import * as projectService from '../../src/services/projectService';
+import * as auditService from '../../src/services/auditService';
 
 const mockedProjectModel = ProjectModel as jest.Mocked<typeof ProjectModel>;
 const mockedEmployeeModel = EmployeeModel as jest.Mocked<typeof EmployeeModel>;
 const mockedUserModel = UserModel as jest.Mocked<typeof UserModel>;
+const mockedTaskModel = TaskModel as jest.Mocked<typeof TaskModel>;
+const mockedAudit = auditService as jest.Mocked<typeof auditService>;
 
 /** Builds a fluent mongoose-query-like mock chain terminating in `lean()`. */
 function chainable(resolvedValue: unknown) {
@@ -30,6 +36,7 @@ const otherManagerUserId = new Types.ObjectId().toString();
 const employeeUserId = new Types.ObjectId().toString();
 const projectId = new Types.ObjectId().toString();
 const employeeId = new Types.ObjectId().toString();
+const admin = { id: adminUserId, role: 'ADMIN' as const };
 
 describe('projectService.createProject', () => {
   const baseInput = {
@@ -45,7 +52,7 @@ describe('projectService.createProject', () => {
     mockedProjectModel.findOne.mockResolvedValueOnce(null);
     mockedProjectModel.create.mockResolvedValueOnce({ _id: 'proj1' } as never);
 
-    const result = await projectService.createProject(baseInput);
+    const result = await projectService.createProject(admin, baseInput);
 
     expect(mockedProjectModel.create).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'Space Shooter', projectCode: 'FP-01', status: 'PLANNING', priority: 'MEDIUM' }),
@@ -56,14 +63,14 @@ describe('projectService.createProject', () => {
   it('rejects when managerId does not correspond to a real user', async () => {
     mockedUserModel.findById.mockReturnValueOnce(chainable(null));
 
-    await expect(projectService.createProject(baseInput)).rejects.toMatchObject({ statusCode: 400 });
+    await expect(projectService.createProject(admin, baseInput)).rejects.toMatchObject({ statusCode: 400 });
     expect(mockedProjectModel.create).not.toHaveBeenCalled();
   });
 
   it('rejects when the assigned manager has role EMPLOYEE', async () => {
     mockedUserModel.findById.mockReturnValueOnce(chainable({ role: 'EMPLOYEE' }));
 
-    await expect(projectService.createProject(baseInput)).rejects.toMatchObject({ statusCode: 400 });
+    await expect(projectService.createProject(admin, baseInput)).rejects.toMatchObject({ statusCode: 400 });
     expect(mockedProjectModel.create).not.toHaveBeenCalled();
   });
 
@@ -71,7 +78,7 @@ describe('projectService.createProject', () => {
     mockedUserModel.findById.mockReturnValueOnce(chainable({ role: 'MANAGER' }));
     mockedProjectModel.findOne.mockResolvedValueOnce({ _id: 'existing' } as never);
 
-    await expect(projectService.createProject(baseInput)).rejects.toMatchObject({ statusCode: 409 });
+    await expect(projectService.createProject(admin, baseInput)).rejects.toMatchObject({ statusCode: 409 });
     expect(mockedProjectModel.create).not.toHaveBeenCalled();
   });
 
@@ -80,7 +87,7 @@ describe('projectService.createProject', () => {
     mockedProjectModel.findOne.mockResolvedValueOnce(null);
 
     await expect(
-      projectService.createProject({ ...baseInput, deadline: '2023-12-01' }),
+      projectService.createProject(admin, { ...baseInput, deadline: '2023-12-01' }),
     ).rejects.toMatchObject({ statusCode: 400 });
     expect(mockedProjectModel.create).not.toHaveBeenCalled();
   });
@@ -93,7 +100,7 @@ describe('projectService.createProject', () => {
     );
 
     await expect(
-      projectService.createProject({ ...baseInput, members: [employeeId] }),
+      projectService.createProject(admin, { ...baseInput, members: [employeeId] }),
     ).rejects.toMatchObject({ statusCode: 400 });
     expect(mockedProjectModel.create).not.toHaveBeenCalled();
   });
@@ -104,7 +111,7 @@ describe('projectService.createProject', () => {
     mockedEmployeeModel.find.mockReturnValueOnce(chainable([]));
 
     await expect(
-      projectService.createProject({ ...baseInput, members: [employeeId] }),
+      projectService.createProject(admin, { ...baseInput, members: [employeeId] }),
     ).rejects.toMatchObject({ statusCode: 400 });
   });
 });
@@ -283,16 +290,21 @@ describe('projectService.assignManager', () => {
     mockedUserModel.findById.mockReturnValueOnce(chainable({ role: 'MANAGER' }));
     mockedProjectModel.findById.mockResolvedValueOnce(project as never);
 
-    await projectService.assignManager(projectId, otherManagerUserId);
+    await projectService.assignManager(admin, projectId, otherManagerUserId);
     expect(String(project.managerId)).toBe(otherManagerUserId);
     expect(save).toHaveBeenCalledTimes(1);
   });
 
   it('rejects a new manager with an ineligible role', async () => {
     mockedUserModel.findById.mockReturnValueOnce(chainable({ role: 'EMPLOYEE' }));
-    await expect(projectService.assignManager(projectId, employeeUserId)).rejects.toMatchObject({
+    await expect(projectService.assignManager(admin, projectId, employeeUserId)).rejects.toMatchObject({
       statusCode: 400,
     });
+  });
+
+  it('rejects an inactive manager', async () => {
+    mockedUserModel.findById.mockReturnValueOnce(chainable({ role: 'MANAGER', isActive: false }));
+    await expect(projectService.assignManager(admin, projectId, otherManagerUserId)).rejects.toMatchObject({ statusCode: 400 });
   });
 });
 
@@ -320,6 +332,28 @@ describe('projectService.addMember / removeMember', () => {
     await expect(
       projectService.addMember({ id: managerUserId, role: 'MANAGER' }, projectId, employeeId),
     ).rejects.toMatchObject({ statusCode: 400 });
+    expect(mockedAudit.recordAuditFailure).toHaveBeenCalledWith(expect.objectContaining({ action: 'PROJECT_MEMBER_ADD_FAILED', targetType: 'Project', targetId: projectId }));
+  });
+
+  it('rejects adding members to an inactive project', async () => {
+    const project = {
+      _id: projectId,
+      managerId: { toString: () => managerUserId },
+      members: [],
+      isActive: false,
+      save: jest.fn(),
+    };
+    mockedProjectModel.findById.mockResolvedValueOnce(project as never);
+
+    await expect(
+      projectService.addMember({ id: managerUserId, role: 'MANAGER' }, projectId, employeeId),
+    ).rejects.toMatchObject({ statusCode: 400 });
+    expect(mockedEmployeeModel.findById).not.toHaveBeenCalled();
+    expect(mockedAudit.recordAuditFailure).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'PROJECT_MEMBER_ADD_FAILED',
+      targetType: 'Project',
+      targetId: projectId,
+    }));
   });
 
   it('rejects adding a member who is already on the project', async () => {
@@ -349,6 +383,7 @@ describe('projectService.addMember / removeMember', () => {
 
     await projectService.removeMember({ id: managerUserId, role: 'MANAGER' }, projectId, employeeId);
     expect(project.members).toHaveLength(0);
+    expect(mockedTaskModel.updateMany).toHaveBeenCalledWith({ projectId: project._id, assignedTo: employeeId }, { $set: { assignedTo: null } });
   });
 
   it('throws 404 when removing an employee who is not a member', async () => {
@@ -381,7 +416,7 @@ describe('projectService.deactivateProject', () => {
     const project = { _id: projectId, isActive: true, save };
     mockedProjectModel.findById.mockResolvedValueOnce(project as never);
 
-    await projectService.deactivateProject(projectId);
+    await projectService.deactivateProject(admin, projectId);
     expect(project.isActive).toBe(false);
   });
 
@@ -389,11 +424,11 @@ describe('projectService.deactivateProject', () => {
     const project = { _id: projectId, isActive: false, save: jest.fn() };
     mockedProjectModel.findById.mockResolvedValueOnce(project as never);
 
-    await expect(projectService.deactivateProject(projectId)).rejects.toMatchObject({ statusCode: 400 });
+    await expect(projectService.deactivateProject(admin, projectId)).rejects.toMatchObject({ statusCode: 400 });
   });
 
   it('throws 404 when the project does not exist', async () => {
     mockedProjectModel.findById.mockResolvedValueOnce(null as never);
-    await expect(projectService.deactivateProject(projectId)).rejects.toMatchObject({ statusCode: 404 });
+    await expect(projectService.deactivateProject(admin, projectId)).rejects.toMatchObject({ statusCode: 404 });
   });
 });
