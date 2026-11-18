@@ -1,7 +1,8 @@
 import { randomBytes } from 'crypto';
 import mongoose from 'mongoose';
+import { ClientSession } from 'mongoose';
 import { EmployeeDocument, EmployeeModel } from '../models/Employee';
-import { UserModel } from '../models/User';
+import { UserDocument, UserModel } from '../models/User';
 import { recordAuditEvent } from './auditService';
 import { comparePassword, hashPassword } from '../utils/password';
 import { loginUser, logoutUser } from './authService';
@@ -74,6 +75,33 @@ export function classifyExistingProductionDemo(markerCount: number, expectedCoun
 
 export function generateDemoPassword(): string {
   return randomBytes(32).toString('base64url');
+}
+
+interface TransactionalCreateModel<T> {
+  create(documents: object[], options: { session: ClientSession; ordered: true }): Promise<T[]>;
+}
+
+/** Mongoose requires ordered:true when create() receives an array with a transaction session. */
+export function createDocumentsInTransaction<T>(model: TransactionalCreateModel<T>, documents: object[], session: ClientSession): Promise<T[]> {
+  return model.create(documents, { session, ordered: true });
+}
+
+/** Return operator-useful error metadata without leaking credentials or database URIs. */
+export function sanitizeProvisioningError(error: unknown): { errorClass: string; errorCode: string | number | null; message: string } {
+  const value = error && typeof error === 'object' ? error as { name?: unknown; code?: unknown; message?: unknown } : {};
+  const errorClass = typeof value.name === 'string' && /^[A-Za-z][A-Za-z0-9_.]{0,79}$/.test(value.name) ? value.name : 'Error';
+  const errorCode = typeof value.code === 'string' && /^[A-Za-z0-9_.-]{1,40}$/.test(value.code)
+    ? value.code
+    : typeof value.code === 'number' && Number.isFinite(value.code) ? value.code : null;
+  let message = typeof value.message === 'string' ? value.message : 'Unknown provisioning failure';
+  message = message
+    .replace(/\bmongodb(?:\+srv)?:\/\/[^\s"'<>]+/gi, '[REDACTED_MONGODB_URI]')
+    .replace(/\b(authorization|cookie)\s*[:=]\s*(?:bearer\s+)?(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1=[REDACTED_SECRET]')
+    .replace(/(["']?)(password(?:hash)?|passwd|secret|token|api[_-]?key)\1\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;}\]]+)/gi, '$2=[REDACTED_SECRET]')
+    .replace(/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, '[REDACTED_EMAIL]')
+    .replace(/[\r\n\t]+/g, ' ')
+    .slice(0, 500);
+  return { errorClass, errorCode, message };
 }
 
 export interface ProvisioningResult {
@@ -155,13 +183,13 @@ export async function provisionProductionDemoUsers(mode: 'dry-run' | 'execute'):
         isActive: true,
         demoSeedKey: `${PRODUCTION_DEMO_NAMESPACE}:user:${user.key}`,
       }));
-      const createdUsers = await UserModel.create(userDocs, { session });
+      const createdUsers = await createDocumentsInTransaction<UserDocument>(UserModel as unknown as TransactionalCreateModel<UserDocument>, userDocs, session);
       const usersByKey = new Map(PRODUCTION_DEMO_USERS.map((user, index) => [user.key, createdUsers[index]]));
       const profilesByKey = new Map<string, EmployeeDocument>();
       for (const profile of employeeProfiles) {
         const managerId = profile.managerKey ? profilesByKey.get(profile.managerKey)?._id : null;
         if (profile.managerKey && !managerId) throw new Error('Demo manager profile relationship could not be resolved.');
-        const created = await EmployeeModel.create([{
+        const created = await createDocumentsInTransaction<EmployeeDocument>(EmployeeModel as unknown as TransactionalCreateModel<EmployeeDocument>, [{
           userId: usersByKey.get(profile.userKey)!._id,
           employeeId: profile.employeeId,
           department: profile.department,
@@ -171,7 +199,7 @@ export async function provisionProductionDemoUsers(mode: 'dry-run' | 'execute'):
           skills: [...profile.skills],
           isActive: true,
           demoSeedKey: `${PRODUCTION_DEMO_NAMESPACE}:employee:${profile.userKey}`,
-        }], { session });
+        }], session);
         profilesByKey.set(profile.userKey, created[0]);
       }
       for (let index = 0; index < createdUsers.length; index += 1) {

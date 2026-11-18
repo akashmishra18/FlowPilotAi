@@ -1,6 +1,6 @@
 import { connectDatabase, disconnectDatabase } from '../config/database';
 import { env } from '../config/env';
-import { assertProductionDemoProvisioningAllowed, provisionProductionDemoUsers } from '../services/productionDemoProvisioningService';
+import { assertProductionDemoProvisioningAllowed, provisionProductionDemoUsers, sanitizeProvisioningError } from '../services/productionDemoProvisioningService';
 import { logger } from '../utils/logger';
 
 function parseMode(args: string[]): 'dry-run' | 'execute' {
@@ -42,19 +42,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  const safeError = error as { name?: string; code?: string; message?: string };
-  const safeMessages = new Set([
-    'This command is restricted to NODE_ENV=production.',
-    'Set ALLOW_PRODUCTION_DEMO_PROVISIONING=true to opt in.',
-    'Pass --confirm-production-demo-provisioning to continue.',
-    'Production demo provisioning refuses a local MongoDB target.',
-    'Pass exactly one of --dry-run or --execute.',
-    'A partial production demo seed already exists. No data was changed; investigate it manually.',
-    'Existing marked demo accounts do not match the expected active roles. No data was changed.',
-    'Existing marked demo employee profiles do not match the expected active relationships. No data was changed.',
-    'A non-demo account or employee profile uses a reserved production demo identifier. No data was changed.',
-  ]);
-  const message = safeMessages.has(safeError.message ?? '') ? safeError.message : 'Provisioning failed; no credentials were printed. Check the backend error code and database transaction availability.';
-  logger.error('Production demo provisioning failed.', { errorClass: safeError.name ?? 'Error', code: safeError.code, message });
+  logger.error('Production demo provisioning failed.', sanitizeProvisioningError(error));
   process.exitCode = 1;
 });

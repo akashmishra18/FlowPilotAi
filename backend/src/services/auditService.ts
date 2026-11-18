@@ -48,7 +48,7 @@ export async function recordAuditEvent(input: AuditEventInput, session?: mongoos
     requestId: input.requestId ?? null,
     error: input.error ? { code: input.error.code, message: input.error.message.slice(0, 500) } : null,
   };
-  if (session) await AuditEventModel.create([document], { session });
+  if (session) await AuditEventModel.create([document], { session, ordered: true });
   else await AuditEventModel.create(document);
 }
 
