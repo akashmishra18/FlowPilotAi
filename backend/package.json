@@ -14,7 +14,8 @@
     "seed:demo": "ts-node src/scripts/seedDemoWorkspace.ts",
     "seed:demo:cleanup": "ts-node src/scripts/cleanupDemoWorkspace.ts",
     "demo:reset-password": "ts-node src/scripts/resetDemoAccountPasswords.ts",
-    "admin:update-local-email": "ts-node src/scripts/updateLocalAdminEmail.ts"
+    "admin:update-local-email": "ts-node src/scripts/updateLocalAdminEmail.ts",
+    "provision:demo:production": "node dist/scripts/provisionProductionDemoUsers.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.600.0",
