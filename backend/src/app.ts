@@ -10,8 +10,16 @@ import routes from './routes';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { logger } from './utils/logger';
 
+export function getTrustProxySetting(nodeEnvironment: string): false | 1 {
+  return nodeEnvironment === 'production' ? 1 : false;
+}
+
 export function createApp(): Application {
   const app = express();
+
+  // Render terminates requests at one trusted proxy/load-balancer hop.
+  // Do not trust arbitrary forwarded headers or proxy chains.
+  app.set('trust proxy', getTrustProxySetting(env.nodeEnv));
 
   // --- Security & parsing middleware ---
   app.use(helmet());

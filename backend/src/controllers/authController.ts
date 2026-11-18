@@ -4,8 +4,27 @@ import { sendSuccess } from '../utils/apiResponse';
 import { AppError } from '../utils/AppError';
 import { isProduction } from '../config/env';
 import * as authService from '../services/authService';
+import { env } from '../config/env';
 
 const REFRESH_COOKIE_NAME = 'refreshToken';
+
+export function getRefreshCookieOptions(production: boolean, expiresAt: Date) {
+  return {
+    httpOnly: true,
+    secure: production,
+    // Vercel and Render use different sites, so the browser requires None+Secure.
+    sameSite: production ? 'none' as const : 'strict' as const,
+    expires: expiresAt,
+    path: '/api/auth',
+  };
+}
+
+function assertAllowedCookieRequestOrigin(req: Request): void {
+  const origin = req.get('origin');
+  if (origin && origin !== env.corsOrigin) {
+    throw new AppError('Request origin is not allowed', 403);
+  }
+}
 
 /**
  * The refresh token lives only in an httpOnly, sameSite cookie — never in
@@ -16,11 +35,7 @@ const REFRESH_COOKIE_NAME = 'refreshToken';
  */
 function setRefreshCookie(res: Response, token: string, expiresAt: Date): void {
   res.cookie(REFRESH_COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: 'strict',
-    expires: expiresAt,
-    path: '/api/auth',
+    ...getRefreshCookieOptions(isProduction, expiresAt),
   });
 }
 
@@ -48,6 +63,7 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const refresh = asyncHandler(async (req: Request, res: Response) => {
+  assertAllowedCookieRequestOrigin(req);
   const rawRefreshToken = req.cookies?.[REFRESH_COOKIE_NAME];
   if (!rawRefreshToken) {
     throw new AppError('No refresh token provided', 401);
@@ -60,6 +76,7 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const logout = asyncHandler(async (req: Request, res: Response) => {
+  assertAllowedCookieRequestOrigin(req);
   const rawRefreshToken = req.cookies?.[REFRESH_COOKIE_NAME];
   await authService.logoutUser(rawRefreshToken);
   clearRefreshCookie(res);

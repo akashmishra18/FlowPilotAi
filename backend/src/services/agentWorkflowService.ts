@@ -11,6 +11,7 @@ import { CompanyIntelligenceView, queryCompanyIntelligence } from './companyInte
 import { randomUUID } from 'crypto';
 import { logger } from '../utils/logger';
 import { writeAgentParserDiagnostic } from '../utils/agentParserDiagnostics';
+import { fetchWithTransientProviderRetry } from '../ai/providerHttp';
 
 interface Actor { id: string; role: Role }
 type Plan = { tool: 'list_overdue_tasks' | 'request_task_reassignment' | 'company_intelligence'; arguments: Record<string, unknown>; rationale: string };
@@ -181,12 +182,11 @@ async function createPlan(request: string, requestId: string, onRationale?: (tex
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
   try {
-    const response = await fetch(endpoint, { method: 'POST', headers: { Authorization: `Bearer ${env.ai.apiKey}`, 'Content-Type': 'application/json' }, signal: controller.signal, body: JSON.stringify({ model: env.ai.model, temperature: 0, stream: Boolean(onRationale), ...(env.ai.provider === 'openai' ? { response_format: { type: 'json_object' } } : {}), messages: [
+    const response = await fetchWithTransientProviderRetry(endpoint, { method: 'POST', headers: { Authorization: `Bearer ${env.ai.apiKey}`, 'Content-Type': 'application/json' }, signal: controller.signal, body: JSON.stringify({ model: env.ai.model, temperature: 0, stream: Boolean(onRationale), ...(env.ai.provider === 'openai' ? { response_format: { type: 'json_object' } } : {}), messages: [
     { role: 'system', content: 'Choose the best matching tool from this exact allowlist and return JSON only: list_overdue_tasks, company_intelligence, request_task_reassignment. ROUTING RULE: questions asking who manages whom, who reports to whom, manager/direct-report lists, team members, employee project membership, employee workload/tasks, project ownership/progress, or pending/overdue assignments MUST use company_intelligence. Examples: "List all managers and their direct-report employees" -> {"tool":"company_intelligence","arguments":{"view":"managers_and_reports"}}; "Show managers and their teams" -> same; "Which employees report to each manager?" -> same. company_intelligence arguments must be {"view":"managers_and_reports"|"employee_projects"|"employee_tasks"|"project_overview"|"pending_tasks"|"overdue_tasks"|"employee_summary"|"team_summary","subject":"optional exact employee/project name"}. Use read-only views only; never return database queries or IDs. For reassignment, extract taskTitle and targetEmployeeName; never invent IDs. Unsupported requests must use tool="unsupported".' },
       { role: 'user', content: request },
-    ] }) });
+    ] }) }, { requestId, provider: env.ai.provider, model: env.ai.model, apiKey: env.ai.apiKey });
     if (!response.ok) {
-      logger.warn('Agent provider request failed', { requestId, provider: env.ai.provider, model: env.ai.model, httpStatus: response.status, responseContentType: response.headers?.get?.('content-type') ?? null, responseStructure: 'non-2xx' });
       throw new AppError('AI provider could not create a plan.', 502);
     }
     if (onRationale) return await readStreamingPlan(response, { requestId, provider: env.ai.provider, model: env.ai.model, httpStatus: response.status, finishReason: null, responseStructure: 'SSE pending' }, onRationale);

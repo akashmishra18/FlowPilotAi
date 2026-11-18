@@ -4,6 +4,7 @@ import { AppError } from '../../src/utils/AppError';
 import { signAccessToken } from '../../src/utils/jwt';
 import * as authService from '../../src/services/authService';
 import { UserModel } from '../../src/models/User';
+import { getRefreshCookieOptions } from '../../src/controllers/authController';
 
 jest.mock('../../src/services/authService');
 jest.mock('../../src/models/User');
@@ -118,6 +119,14 @@ describe('POST /api/auth/login', () => {
   });
 });
 
+describe('refresh cookie configuration', () => {
+  it('uses cross-site secure cookies in production and strict cookies locally', () => {
+    const expiresAt = new Date('2030-01-01T00:00:00.000Z');
+    expect(getRefreshCookieOptions(true, expiresAt)).toMatchObject({ httpOnly: true, secure: true, sameSite: 'none', expires: expiresAt, path: '/api/auth' });
+    expect(getRefreshCookieOptions(false, expiresAt)).toMatchObject({ secure: false, sameSite: 'strict' });
+  });
+});
+
 describe('POST /api/auth/users (admin provisioning)', () => {
   it('allows an ADMIN to provision an explicitly assigned role', async () => {
     mockedAuthService.provisionUser.mockResolvedValue({ ...fakeUser, role: 'MANAGER' } as never);
@@ -173,6 +182,12 @@ describe('POST /api/auth/refresh', () => {
   it('returns 401 when no refresh-token cookie is present', async () => {
     const res = await request(app).post('/api/auth/refresh');
     expect(res.status).toBe(401);
+  });
+
+  it('rejects a cross-origin refresh request before checking the cookie or calling auth service', async () => {
+    const res = await request(app).post('/api/auth/refresh').set('Origin', 'https://unexpected.example');
+    expect(res.status).toBe(403);
+    expect(mockedAuthService.refreshSession).not.toHaveBeenCalled();
   });
 });
 
