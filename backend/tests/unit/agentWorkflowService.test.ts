@@ -178,3 +178,15 @@ it('limits non-admin workflow history to the caller', async () => {
   expect(runs.find).toHaveBeenCalledWith({ userId: actor.id });
   expect(query.populate).toHaveBeenCalledWith({ path: 'approvalId', select: 'status' });
 });
+
+it('reports persistent provider unavailability before executing a streaming workflow', async () => {
+  (global.fetch as jest.Mock).mockImplementation(async () => new Response(null, { status: 503 }));
+  const progress = jest.fn();
+  await expect(submitAgentWorkflow(actor, 'Show overdue tasks', progress)).rejects.toMatchObject({
+    message: 'The AI provider is temporarily unavailable. Please try again shortly.',
+  });
+  expect(global.fetch).toHaveBeenCalledTimes(3);
+  expect(progress.mock.calls).toEqual([[{ type: 'phase', phase: 'planning' }]]);
+  expect(overdue).not.toHaveBeenCalled();
+  expect(runs.create).not.toHaveBeenCalled();
+});

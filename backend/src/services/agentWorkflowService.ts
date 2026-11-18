@@ -186,6 +186,9 @@ async function createPlan(request: string, requestId: string, onRationale?: (tex
     { role: 'system', content: 'Choose the best matching tool from this exact allowlist and return JSON only: list_overdue_tasks, company_intelligence, request_task_reassignment. ROUTING RULE: questions asking who manages whom, who reports to whom, manager/direct-report lists, team members, employee project membership, employee workload/tasks, project ownership/progress, or pending/overdue assignments MUST use company_intelligence. Examples: "List all managers and their direct-report employees" -> {"tool":"company_intelligence","arguments":{"view":"managers_and_reports"}}; "Show managers and their teams" -> same; "Which employees report to each manager?" -> same. company_intelligence arguments must be {"view":"managers_and_reports"|"employee_projects"|"employee_tasks"|"project_overview"|"pending_tasks"|"overdue_tasks"|"employee_summary"|"team_summary","subject":"optional exact employee/project name"}. Use read-only views only; never return database queries or IDs. For reassignment, extract taskTitle and targetEmployeeName; never invent IDs. Unsupported requests must use tool="unsupported".' },
       { role: 'user', content: request },
     ] }) }, { requestId, provider: env.ai.provider, model: env.ai.model, apiKey: env.ai.apiKey });
+    if (response.status === 503) {
+      throw new AppError('The AI provider is temporarily unavailable. Please try again shortly.', 503);
+    }
     if (!response.ok) {
       throw new AppError('AI provider could not create a plan.', 502);
     }
